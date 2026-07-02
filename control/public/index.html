@@ -168,9 +168,11 @@ $('#new').onclick = async () => {
 $('#back').onclick = () => { session = null; loadList(); };
 
 // ── Wysyłanie + streaming odpowiedzi ────────────────────────
+let stopRec = () => {};   // podpinane niżej, gdy jest Web Speech
 f.addEventListener('submit', async e => {
   e.preventDefault();
   const prompt = q.value.trim(); if(!prompt || !session) return;
+  stopRec();   // wysłanie = koniec nagrywania; nic już nie pisze do pola
   try { actx ??= new (window.AudioContext || window.webkitAudioContext)(); } catch {}  // gest usera → odblokuj audio
   add('user', prompt); q.value = '';
   try {
@@ -193,32 +195,36 @@ f.addEventListener('submit', async e => {
   } catch(err){ add('result', '[błąd] '+err.message); }
 });
 
-// ── Głos: Web Speech (pl-PL), ciągłe słuchanie do ręki ──────
+// ── Głos: Web Speech (pl-PL) ────────────────────────────────
+// continuous=false: Android w trybie continuous powtarza finalne wyniki (dublowanie).
+// Krótkie sesje rozpoznawania + auto-restart w onend; zatwierdzony tekst ląduje w base.
+// stopRec() = twardy stop: wysłanie formularza WYŁĄCZA mikrofon, a spóźnione
+// zdarzenia onresult są ignorowane (nic nie wraca do pustego pola).
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (SR) {
-  const rec = new SR(); rec.lang='pl-PL'; rec.interimResults=true; rec.continuous=true;
-  // Bug (Android): iteracja e.results od zera dublowała już zatwierdzone wpisy.
-  // Fix: idź od e.resultIndex, finalne kumuluj w finalT (trwa przez auto-restart),
-  // tymczasowe (interim) licz osobno.
-  let base='', finalT='', listening=false;
+  const rec = new SR(); rec.lang='pl-PL'; rec.interimResults=true; rec.continuous=false;
+  let listening=false, base='';
+  stopRec = () => {
+    listening=false; base='';
+    try { rec.stop(); } catch(_){}
+    mic.classList.remove('rec');
+  };
   mic.addEventListener('click', () => {
-    if (listening) { listening=false; rec.stop(); return; }
-    base = q.value ? q.value+' ' : ''; finalT=''; listening=true;
+    if (listening) { stopRec(); return; }
+    base = q.value ? q.value+' ' : ''; listening=true;
     try { rec.start(); } catch(_){}
   });
   rec.onstart = () => mic.classList.add('rec');
-  rec.onerror = () => { listening=false; mic.classList.remove('rec'); };
+  rec.onerror = () => stopRec();
   rec.onend = () => {
-    if (listening) { try { rec.start(); } catch(_){} return; }  // auto-restart, finalT trwa
-    mic.classList.remove('rec');
+    if (!listening) { mic.classList.remove('rec'); return; }
+    base = q.value ? q.value+' ' : '';        // zatwierdź skończoną wypowiedź
+    try { rec.start(); } catch(_) { stopRec(); }  // słuchaj dalej (nowa czysta sesja)
   };
   rec.onresult = e => {
-    let interim='';
-    for (let i=e.resultIndex; i<e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) finalT += r[0].transcript; else interim += r[0].transcript;
-    }
-    q.value = base + finalT + interim;
+    if (!listening) return;                    // po stopie nic nie pisze do pola
+    let t=''; for (const r of e.results) t += r[0].transcript;
+    q.value = base + t;                        // przebudowa całości — idempotentne
   };
 } else { mic.disabled = true; mic.title = 'Brak Web Speech API — pisz ręcznie'; }
 
