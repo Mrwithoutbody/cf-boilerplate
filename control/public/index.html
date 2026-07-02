@@ -107,7 +107,9 @@ function show(views){ [...listView, ...chatView].forEach(el => el.classList.add(
     const { styles = [] } = await (await api('/styles')).json();
     for (const s of styles) styleSel.add(new Option(s, s));
     const saved = localStorage.getItem('style');
-    styleSel.value = styles.includes(saved) ? saved : (styles[0] || '');
+    // Domyślnie żołnierski (jeśli jest), inaczej pierwszy z listy.
+    styleSel.value = styles.includes(saved) ? saved
+      : (styles.includes('zolnierski') ? 'zolnierski' : (styles[0] || ''));
   } catch {}
 })();
 styleSel.addEventListener('change', () => localStorage.setItem('style', styleSel.value));
@@ -139,11 +141,19 @@ ttsBox.onchange = () => {
 // Dwa głosy: Claude (domyślny pl) i echo usera (inny pl głos, a jak nie ma —
 // ten sam z wyższym tonem, żeby odróżnić kto mówi). Lista głosów bywa pusta
 // do zdarzenia 'voiceschanged'.
+// Web Speech nie ma flagi płci → heurystyka po nazwie głosu. Android nazywa
+// głosy "...#male_1...", iOS ma "Krzysztof"; odsiewamy znane żeńskie.
 let vClaude = null, vUser = null;
+function isMale(v){
+  const n = v.name.toLowerCase();
+  if (/female|kobie|zosia|\bewa\b|agnieszk|\bmaja\b|paulina|female/.test(n)) return false;
+  return /\bmale\b|male_|męsk|krzysztof|marek|adam|\bjan\b|piotr|zbigniew/.test(n);
+}
 function pickVoices(){
   const pl = speechSynthesis.getVoices().filter(v => /pl/i.test(v.lang));
-  vClaude = pl[0] || null;
-  vUser = pl.find(v => v !== vClaude) || null;   // drugi głos jeśli istnieje
+  vClaude = pl.find(isMale) || pl[0] || null;                       // preferuj męski
+  vUser = pl.find(v => v !== vClaude && isMale(v))                  // inny męski...
+       || pl.find(v => v !== vClaude) || null;                     // ...lub jakikolwiek inny
 }
 if (window.speechSynthesis){ pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
 // who: 'claude' (domyślnie) albo 'user' (echo tego co powiedział user).
@@ -153,7 +163,7 @@ function speak(text, who){
     const u = new SpeechSynthesisUtterance(text.slice(0, 600));
     u.lang = 'pl-PL';
     if (who === 'user'){
-      u.voice = vUser || vClaude; u.rate = 1.2; u.pitch = vUser ? 1 : 1.4;   // brak 2. głosu → różnicuj tonem
+      u.voice = vUser || vClaude; u.rate = 1.2; u.pitch = vUser ? 1 : 0.85;   // brak 2. głosu → niżej (męsko), nie wyżej
     } else {
       u.voice = vClaude; u.rate = 1.15; u.pitch = 1;
     }
