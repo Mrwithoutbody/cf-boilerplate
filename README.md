@@ -9,8 +9,9 @@ cd ~/projekty/moja-apka
 ```
 
 ## 2. Token Cloudflare (jedno konto)
-Dash → My Profile → API Tokens → Create Token → „Edit Cloudflare Workers" →
-Account Resources = **tylko to jedno konto** → Create. Skopiuj token i Account ID.
+Dash → wejdź na konto → **API Tokens** (URL: `dash.cloudflare.com/<ACCOUNT_ID>/api-tokens`)
+→ Create Token → „Edit Cloudflare Workers" → Create. Skopiuj token.
+Token z tej strony jest przypięty do jednego konta. **Account ID = `<ACCOUNT_ID>` z adresu.**
 
 ## 3. Setup
 ```bash
