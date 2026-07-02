@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Deploy produkcyjny na Cloudflare. Commit lokalny przed wypchnięciem.
+# Deploy produkcyjny na Cloudflare — TYLKO na konto z .env (token scoped).
+# Guard blokuje deploy z boilerplate i bez configu.
 set -euo pipefail
-cd "$(dirname "$0")/.."
-[ -f .env ] && { set -a; . ./.env; set +a; }   # CLOUDFLARE_ACCOUNT_ID itd.
-[ -d app ] || { echo "Brak app/. Uruchom setup.sh."; exit 1; }
+DIR="$(dirname "$0")"
+. "$DIR/guard.sh"                 # ładuje+eksportuje CLOUDFLARE_*, blokuje jak trzeba
+cd "$DIR/.."
+[ -d app ] || { echo "Brak app/. Uruchom ./setup.sh."; exit 1; }
 
 MSG="${1:-deploy: $(date +%F' '%T)}"
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then

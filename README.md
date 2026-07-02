@@ -14,8 +14,8 @@ cd moja-apka
 ```
 Albo `git clone https://github.com/Mrwithoutbody/cf-boilerplate moja-apka && rm -rf moja-apka/.git`.
 
-`setup.sh` przeprowadzi przez: sprawdzenie narzędzi → `wrangler login` (Twoje konto
-Cloudflare) → nowy/istniejący projekt → pierwszy deploy → opcjonalne proxy głosowe.
+`setup.sh` przeprowadzi przez: sprawdzenie narzędzi → **wklejenie tokenu API scoped na
+jedno konto** → nowy/istniejący projekt → pierwszy deploy → opcjonalne proxy głosowe.
 Na końcu dostajesz URL `*.workers.dev` — jedyne miejsce podglądu aplikacji.
 
 ## Narzędzie vs projekt (ważne)
@@ -28,35 +28,54 @@ Na końcu dostajesz URL `*.workers.dev` — jedyne miejsce podglądu aplikacji.
 Zasada „bez GitHub" poniżej dotyczy **projektów**, nie tego repo.
 
 ## Model (dla generowanych projektów)
+- **Izolacja per konto.** Deploy WYŁĄCZNIE na jedno konto — przez token API scoped na
+  to konto w `.env`. Bez `wrangler login` (globalny OAuth widzi wszystkie konta = brak
+  izolacji). Zły account_id albo bug → API odrzuca, nie wycieka do cudzej produkcji.
 - **Bez GitHub.** Git tylko lokalny (init/add/commit), zero remote, zero push.
 - **Cloudflare = jedyne środowisko.** Apki nie odpalasz lokalnie. Podgląd = URL Cloudflare.
 - **Deploy** = `wrangler deploy` z PC. **Preview** = `wrangler versions upload`.
 - **Sterowanie** = telefon (głos) → Cloudflare Tunnel → PC-proxy → Claude Code.
 
+## Izolacja i guardy (dlaczego nie da się wgrać w cudze konto)
+- **Token scoped, nie OAuth.** Utwórz token: dash → My Profile → API Tokens →
+  „Edit Cloudflare Workers", **Account Resources = tylko to jedno konto**. Wklej do
+  `.env` (`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`). Token jest bezsilny na
+  innych kontach — izolacja fizyczna, nie umowna.
+- **Guard przed każdym deploy** (`scripts/guard.sh`, wołany przez deploy/preview/new):
+  odmawia jeśli (a) katalog to boilerplate DEV (marker `.is-boilerplate`),
+  (b) brak `.env`, (c) pusty `CLOUDFLARE_ACCOUNT_ID` lub `CLOUDFLARE_API_TOKEN`.
+- **Boilerplate nigdy nie deployuje.** Marker `.is-boilerplate` blokuje deploy w repo
+  narzędzia; `new.sh`/`link.sh` usuwają go dopiero gdy z instancji robisz realny projekt.
+- **Zakaz zgadywania.** Skrypty nie czytają listy kont (`wrangler whoami`) i nie iterują
+  po kontach. Konto zawsze jawne, z `.env`.
+
 ## Struktura
 ```
-setup.sh            orkiestrator (check → login → new|existing → proxy)
+setup.sh            orkiestrator (check → config tokenu → new|existing → proxy)
 scripts/
-  check.sh          toolchain + auto-instal cloudflared
-  new.sh            scaffold Worker + git init + pierwszy deploy
-  link.sh           podłącz istniejący kod/Workera
-  deploy.sh         commit lokalny + wrangler deploy (produkcja)
-  preview.sh        wrangler versions upload (preview URL, bez ruszania prod)
-  proxy.sh          instal+start serwera-proxy, instrukcja tunelu
+  check.sh          toolchain (node/git/wrangler)
+  guard.sh          bramka: blokuje deploy z boilerplate i bez configu konta
+  new.sh            scaffold Worker + git init + (opcjonalny) deploy; usuwa marker
+  link.sh           podłącz istniejący kod/Workera; usuwa marker
+  deploy.sh         guard + commit lokalny + wrangler deploy (produkcja)
+  preview.sh        guard + wrangler versions upload (preview URL)
+  proxy.sh          instal cloudflared + start serwera-proxy, instrukcja tunelu
 control/            serwer-proxy (web UI głosowy + most Claude Code, zero deps)
   server.js  public/index.html  package.json
-.env.example        ANTHROPIC_API_KEY, PORT
+.env.example        CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, ANTHROPIC_API_KEY, PORT
+.is-boilerplate     marker DEV — obecny = deploy zablokowany (usuwany przy new/link)
 .gitignore
 app/                <- tu ląduje budowana aplikacja (tworzy new.sh/link.sh)
 ```
 
 ## Wymagania
-Node 18+, git, `wrangler` (globalnie lub przez `npx`). `cloudflared` doinstaluje się
-sam (Ubuntu/Debian). Konto Cloudflare. `ANTHROPIC_API_KEY` — tylko jeśli używasz proxy głosowego.
+Node 18+, git, `wrangler` (globalnie lub przez `npx`). Konto Cloudflare + **token API
+scoped na to konto** (patrz „Izolacja i guardy"). `cloudflared` i `ANTHROPIC_API_KEY`
+— tylko gdy używasz proxy głosowego.
 
 ## Kroki setup.sh
-1. sprawdza narzędzia, doinstaluje `cloudflared`
-2. `wrangler login` (jeśli nie zalogowany) — projekt siada pod tym kontem
+1. sprawdza narzędzia
+2. config konta: wkleja `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` (scoped) do `.env`
 3. pytanie **nowy [n]** czy **istniejący [e]**
 4. opcjonalnie stawia proxy głosowe + pokazuje komendę tunelu
 
