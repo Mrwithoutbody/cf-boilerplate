@@ -16,6 +16,9 @@ const APP_DIR = resolve(__dirname, '..', 'app');   // katalog budowanej aplikacj
 const STYLES_DIR = join(__dirname, 'styles');      // presety stylu odpowiedzi (*.md)
 const PORT = Number(process.env.PORT || 3000);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+// Headless = nie ma jak kliknąć zgody, komendy spoza listy są auto-odrzucane.
+// Biała lista pod protokół (deploy + git + npm), NIE bypass wszystkiego.
+const ALLOWED_TOOLS = ['Bash(npx wrangler:*)', 'Bash(git:*)', 'Bash(npm:*)'];
 // Katalog gdzie Claude Code trzyma transkrypty sesji dla APP_DIR (ścieżka → myślniki).
 const PROJDIR = join(homedir(), '.claude', 'projects', APP_DIR.replace(/[/.]/g, '-'));
 
@@ -221,7 +224,8 @@ const server = http.createServer(async (req, res) => {
     // Nowa sesja gdy plik jeszcze nie istnieje, inaczej wznów.
     const started = existsSync(join(PROJDIR, sessionId + '.jsonl'));
     const sys = await systemPrompt(styleName);
-    const args = ['--print', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits'];
+    const args = ['--print', '--output-format', 'stream-json', '--verbose',
+                  '--permission-mode', 'acceptEdits', '--allowedTools', ...ALLOWED_TOOLS];
     if (started) args.push('--resume', sessionId);
     else args.push('--session-id', sessionId);
     if (sys) args.push('--append-system-prompt', sys);
