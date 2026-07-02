@@ -72,6 +72,38 @@ async function loadStyle(name) {
   if (!name || !names.includes(name)) return '';
   try { return (await readFile(join(STYLES_DIR, name + '.md'), 'utf8')).trim(); } catch { return ''; }
 }
+// System prompt = protokół pracy (zawsze) + wybrany ton.
+async function systemPrompt(styleName) {
+  const parts = [];
+  try { parts.push((await readFile(join(__dirname, 'protocol.md'), 'utf8')).trim()); } catch {}
+  const s = await loadStyle(styleName);
+  if (s) parts.push(s);
+  return parts.join('\n\n');
+}
+
+// ── URL aplikacji na Cloudflare: nazwa z app/wrangler.* + subdomena z CF API ─
+let appUrlCache = null;
+async function getAppUrl() {
+  if (appUrlCache !== null) return appUrlCache;
+  appUrlCache = '';
+  try {
+    let name = '';
+    for (const wf of ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']) {
+      try {
+        const txt = await readFile(join(APP_DIR, wf), 'utf8');
+        name = (txt.match(/"name"\s*:\s*"([^"]+)"/) || txt.match(/^name\s*=\s*"([^"]+)"/m) || [])[1] || '';
+        if (name) break;
+      } catch {}
+    }
+    const acc = process.env.CLOUDFLARE_ACCOUNT_ID, token = process.env.CLOUDFLARE_API_TOKEN;
+    if (!name || !acc || !token) return appUrlCache;
+    const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc}/workers/subdomain`,
+      { headers: { authorization: `Bearer ${token}` } });
+    const sub = (await r.json())?.result?.subdomain;
+    if (sub) appUrlCache = `https://${name}.${sub}.workers.dev`;
+  } catch {}
+  return appUrlCache;
+}
 
 // ── Sesje: lista + historia z transkryptów na dysku ────────────────────────
 async function listSessions() {
@@ -140,6 +172,11 @@ const server = http.createServer(async (req, res) => {
     return sendJSON(res, 200, { styles: await listStyles() });
   }
 
+  // Publiczny adres aplikacji (podgląd wyników na drugim urządzeniu)
+  if (req.method === 'GET' && path === '/appurl') {
+    return sendJSON(res, 200, { url: await getAppUrl() });
+  }
+
   // Lista sesji
   if (req.method === 'GET' && path === '/sessions') {
     try { return sendJSON(res, 200, await listSessions()); }
@@ -183,11 +220,11 @@ const server = http.createServer(async (req, res) => {
 
     // Nowa sesja gdy plik jeszcze nie istnieje, inaczej wznów.
     const started = existsSync(join(PROJDIR, sessionId + '.jsonl'));
-    const style = await loadStyle(styleName);
+    const sys = await systemPrompt(styleName);
     const args = ['--print', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits'];
     if (started) args.push('--resume', sessionId);
     else args.push('--session-id', sessionId);
-    if (style) args.push('--append-system-prompt', style);
+    if (sys) args.push('--append-system-prompt', sys);
     args.push('-p', prompt);
 
     const child = spawn(CLAUDE_BIN, args, {
@@ -222,8 +259,11 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404); res.end('not found');
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`▶ proxy: http://localhost:${PORT}  (app: ${APP_DIR})`);
   console.log(`  sesje z: ${PROJDIR}`);
+  const url = await getAppUrl();
+  console.log(url ? `  🌐 aplikacja (podgląd wyników): ${url}`
+                  : '  ! adres aplikacji nieznany (brak app/wrangler.* lub CLOUDFLARE_* w .env)');
   console.log('  Wystaw przez: cloudflared tunnel --url http://localhost:' + PORT);
 });
