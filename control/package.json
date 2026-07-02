@@ -1,0 +1,10 @@
+{
+  "name": "control-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Web UI głosowy + most do Claude Code. Sterowanie z telefonu przez Cloudflare Tunnel.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
