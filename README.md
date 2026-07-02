@@ -8,11 +8,11 @@ przez Claude Code za tunelem.
 
 ```bash
 # najprościej — kopia bez historii git (wymaga tylko Node/npx):
-npx degit <user>/cf-boilerplate moja-apka
+npx degit Mrwithoutbody/cf-boilerplate moja-apka
 cd moja-apka
 ./setup.sh
 ```
-Albo `git clone https://github.com/<user>/cf-boilerplate moja-apka && rm -rf moja-apka/.git`.
+Albo `git clone https://github.com/Mrwithoutbody/cf-boilerplate moja-apka && rm -rf moja-apka/.git`.
 
 `setup.sh` przeprowadzi przez: sprawdzenie narzędzi → `wrangler login` (Twoje konto
 Cloudflare) → nowy/istniejący projekt → pierwszy deploy → opcjonalne proxy głosowe.
