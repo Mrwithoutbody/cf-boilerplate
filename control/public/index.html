@@ -97,7 +97,8 @@ styleSel.addEventListener('change', () => localStorage.setItem('style', styleSel
   } catch {}
 })();
 
-// ── TTS: czytaj podsumowanie (ostatni tekst Claude) po zakończeniu tury ─
+// ── TTS: czytaj teksty Claude na bieżąco (kolejka utterances, bez cancel —
+// wiadomości czytane po kolei; ostatnia = podsumowanie z protokołu) ─
 const ttsBtn = $('#tts');
 let ttsOn = localStorage.getItem('tts') !== 'off';
 ttsBtn.classList.toggle('off', !ttsOn);
@@ -109,10 +110,9 @@ ttsBtn.onclick = () => {
 function speak(text){
   if (!ttsOn || !text || !window.speechSynthesis) return;
   try {
-    speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text.slice(0, 600));
     u.lang = 'pl-PL';
-    speechSynthesis.speak(u);
+    speechSynthesis.speak(u);   // dokleja do kolejki — nie przerywa czytanego
   } catch {}
 }
 
@@ -129,6 +129,25 @@ function ding(){
     o.start(); o.stop(actx.currentTime + 0.45);
   } catch {}
   navigator.vibrate?.(200);
+}
+
+// ── Sonar: delikatny ping przy komunikacie technicznym (🔧 tool).
+// Throttle — seria komend pod rząd to jeden ping, nie karabin. ─
+let lastPing = 0;
+function sonar(){
+  if (performance.now() - lastPing < 1500) return;
+  lastPing = performance.now();
+  try {
+    actx ??= new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.connect(g); g.connect(actx.destination);
+    o.frequency.setValueAtTime(1200, actx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(880, actx.currentTime + 0.3);   // opadający ton = sonar
+    g.gain.setValueAtTime(0.0001, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.05, actx.currentTime + 0.02);      // cicho (ding ma 0.25)
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.35);
+    o.start(); o.stop(actx.currentTime + 0.4);
+  } catch {}
 }
 
 function add(who, text){
@@ -182,11 +201,12 @@ f.addEventListener('submit', async e => {
   const prompt = q.value.trim(); if(!prompt || !session) return;
   stopRec();   // wysłanie = koniec nagrywania; nic już nie pisze do pola
   try { actx ??= new (window.AudioContext || window.webkitAudioContext)(); } catch {}  // gest usera → odblokuj audio
+  speechSynthesis?.cancel();   // nowa tura = nie doczytuj starej
   add('user', prompt); q.value = '';
   try {
     const r = await api('/ask', {method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ sessionId: session, prompt, style: styleSel.value })});
-    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '', lastClaude = '';
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     for(;;){
       const {value,done} = await reader.read(); if(done) break;
       buf += dec.decode(value,{stream:true});
@@ -195,8 +215,9 @@ f.addEventListener('submit', async e => {
         const line = buf.slice(0,nl); buf = buf.slice(nl+1);
         if(!line.trim()) continue;
         let o; try { o = JSON.parse(line); } catch { continue; }
-        if(o.who === 'claude') lastClaude = o.text;   // ostatni tekst = podsumowanie
-        if(o.who === 'done'){ ding(); speak(lastClaude); continue; }
+        if(o.who === 'claude') speak(o.text);   // czytaj na bieżąco; podsumowanie i tak jest ostatnie w kolejce
+        if(o.who === 'tool') sonar();           // komunikat techniczny → cichy ping
+        if(o.who === 'done'){ ding(); continue; }
         add(o.who, o.text);
       }
     }
