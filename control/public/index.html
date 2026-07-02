@@ -76,6 +76,8 @@
     <h3>⚙️ Opcje</h3>
     <label>Styl odpowiedzi <select id="style"></select></label>
     <label>🔊 Głos i sonar <input type="checkbox" id="tts"></label>
+    <label>Głos lektora <select id="voice"></select></label>
+    <label>Prędkość <input type="range" id="rate" min="0.7" max="1.6" step="0.05"></label>
     <button id="optsClose">Zamknij</button>
   </div>
 </div>
@@ -141,20 +143,35 @@ ttsBox.onchange = () => {
 // Dwa głosy: Claude (domyślny pl) i echo usera (inny pl głos, a jak nie ma —
 // ten sam z wyższym tonem, żeby odróżnić kto mówi). Lista głosów bywa pusta
 // do zdarzenia 'voiceschanged'.
-// Web Speech nie ma flagi płci → heurystyka po nazwie głosu. Android nazywa
-// głosy "...#male_1...", iOS ma "Krzysztof"; odsiewamy znane żeńskie.
+// Głos i prędkość wybierane w opcjach (localStorage). Lista głosów zależy od
+// urządzenia — dropdown pokazuje co telefon faktycznie ma. Domyślnie próbujemy
+// męskiego (heurystyka po nazwie: Android "...#male...", iOS "Krzysztof").
+const voiceSel = $('#voice'), rateInput = $('#rate');
+let rate = parseFloat(localStorage.getItem('rate')) || 1.15;
+rateInput.value = rate;
+rateInput.oninput = () => { rate = parseFloat(rateInput.value); localStorage.setItem('rate', rate); };
 let vClaude = null, vUser = null;
 function isMale(v){
   const n = v.name.toLowerCase();
   if (/female|kobie|zosia|\bewa\b|agnieszk|\bmaja\b|paulina|female/.test(n)) return false;
-  return /\bmale\b|male_|męsk|krzysztof|marek|adam|\bjan\b|piotr|zbigniew/.test(n);
+  return /\bmale\b|male_|męsk|krzysztof|marek|adam|\bjan\b|piotr|zbigniew|jacek/.test(n);
 }
 function pickVoices(){
-  const pl = speechSynthesis.getVoices().filter(v => /pl/i.test(v.lang));
-  vClaude = pl.find(isMale) || pl[0] || null;                       // preferuj męski
-  vUser = pl.find(v => v !== vClaude && isMale(v))                  // inny męski...
-       || pl.find(v => v !== vClaude) || null;                     // ...lub jakikolwiek inny
+  const all = speechSynthesis.getVoices();
+  const pl = all.filter(v => /pl/i.test(v.lang));
+  const list = pl.length ? pl : all;            // brak polskich → pokaż wszystkie
+  if (voiceSel.options.length !== list.length){ // wypełnij dropdown gdy lista gotowa
+    voiceSel.innerHTML = '';
+    for (const v of list) voiceSel.add(new Option(v.name + (/pl/i.test(v.lang) ? '' : ' · ' + v.lang), v.name));
+  }
+  const saved = localStorage.getItem('voice');
+  vClaude = list.find(v => v.name === saved)    // wybór usera...
+         || pl.find(isMale) || pl[0] || all[0] || null;   // ...albo domyślnie męski pl
+  if (vClaude) voiceSel.value = vClaude.name;
+  // Echo usera: inny polski głos jeśli jest, inaczej ten sam (różnicowany tonem).
+  vUser = pl.find(v => v !== vClaude && isMale(v)) || pl.find(v => v !== vClaude) || null;
 }
+voiceSel.onchange = () => { localStorage.setItem('voice', voiceSel.value); pickVoices(); };
 if (window.speechSynthesis){ pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
 // Tekst tnie się na zdania (≤180 znaków/kawałek) i kolejkuje osobno. Powód:
 // silniki TTS na Androidzie/Chrome ucinają pojedynczą długą wypowiedź po
@@ -176,8 +193,8 @@ function speak(text, who){
     try {
       const u = new SpeechSynthesisUtterance(part);
       u.lang = 'pl-PL';
-      if (isUser){ u.voice = vUser || vClaude; u.rate = 1.2; u.pitch = vUser ? 1 : 0.85; }
-      else { u.voice = vClaude; u.rate = 1.15; u.pitch = 1; }
+      if (isUser){ u.voice = vUser || vClaude; u.rate = rate * 1.05; u.pitch = vUser ? 1 : 0.85; }
+      else { u.voice = vClaude; u.rate = rate; u.pitch = 1; }
       speechSynthesis.speak(u);   // dokleja do kolejki — nie przerywa czytanego
     } catch {}
   }
