@@ -156,19 +156,31 @@ function pickVoices(){
        || pl.find(v => v !== vClaude) || null;                     // ...lub jakikolwiek inny
 }
 if (window.speechSynthesis){ pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
+// Tekst tnie się na zdania (≤180 znaków/kawałek) i kolejkuje osobno. Powód:
+// silniki TTS na Androidzie/Chrome ucinają pojedynczą długą wypowiedź po
+// ~15 s — krótkie kawałki czytają się w całości, bez limitu długości raportu.
+function chunk(text){
+  const out = [];
+  for (const s of text.replace(/\s+/g, ' ').match(/[^.!?…]+[.!?…]*/g) || []){
+    let t = s.trim(); if (!t) continue;
+    while (t.length > 180){ out.push(t.slice(0, 180)); t = t.slice(180); }   // twarde cięcie zdania-molocha
+    out.push(t);
+  }
+  return out;
+}
 // who: 'claude' (domyślnie) albo 'user' (echo tego co powiedział user).
 function speak(text, who){
   if (!ttsOn || !text || !window.speechSynthesis) return;
-  try {
-    const u = new SpeechSynthesisUtterance(text.slice(0, 600));
-    u.lang = 'pl-PL';
-    if (who === 'user'){
-      u.voice = vUser || vClaude; u.rate = 1.2; u.pitch = vUser ? 1 : 0.85;   // brak 2. głosu → niżej (męsko), nie wyżej
-    } else {
-      u.voice = vClaude; u.rate = 1.15; u.pitch = 1;
-    }
-    speechSynthesis.speak(u);   // dokleja do kolejki — nie przerywa czytanego
-  } catch {}
+  const isUser = who === 'user';
+  for (const part of chunk(text)){
+    try {
+      const u = new SpeechSynthesisUtterance(part);
+      u.lang = 'pl-PL';
+      if (isUser){ u.voice = vUser || vClaude; u.rate = 1.2; u.pitch = vUser ? 1 : 0.85; }
+      else { u.voice = vClaude; u.rate = 1.15; u.pitch = 1; }
+      speechSynthesis.speak(u);   // dokleja do kolejki — nie przerywa czytanego
+    } catch {}
+  }
 }
 
 // ── Sygnał końca odpowiedzi: ding (WebAudio) + wibracja ─────
