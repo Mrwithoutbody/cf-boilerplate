@@ -50,5 +50,7 @@ bash scripts/proxy.sh          # serwer + tunel + kod QR — jedno polecenie, je
 W terminalu pojawi się **kod QR** — zeskanuj aparatem telefonu, otworzy się web UI.
 Mów (🎤) albo pisz, Claude Code zmienia projekt w `app/`. Ctrl+C ubija serwer i tunel.
 
-⚠️ Quick tunnel jest publiczny — kto zna link, steruje Twoim kompem. Stała domena
-→ włącz **Cloudflare Access** (polityka: tylko Twój email).
+🔑 Dostęp chroni **klucz w linku z QR** (rotuje przy każdym starcie proxy; server
+odrzuca requesty bez niego, nasłuchuje tylko na loopbacku). Link z QR = pełna
+kontrola nad Twoim komputerem — traktuj jak hasło, nie udostępniaj i nie wklejaj
+nigdzie. Po restarcie proxy stary link umiera — zeskanuj nowy QR.

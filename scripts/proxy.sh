@@ -37,6 +37,12 @@ ok "Zależności proxy zainstalowane."
 PORT="$(ask 'Port proxy' 3000)"
 set -a; . ./.env; set +a
 
+# Klucz dostępu (capability URL): rotuje z każdym startem jak URL tunelu.
+# Ląduje we FRAGMENCIE linku w QR (#k=...) — fragment nie opuszcza przeglądarki,
+# nie trafia do logów tunelu ani Referera. Server odrzuca requesty bez klucza.
+PROXY_KEY="$(node -e 'console.log(require("crypto").randomBytes(16).toString("hex"))')"
+export PROXY_KEY
+
 # Serwer w tle (most do lokalnego Claude Code).
 ( cd control && PORT="$PORT" node server.js ) &
 SRV=$!
@@ -47,7 +53,7 @@ sleep 1
 ok "Serwer: http://localhost:$PORT"
 
 warn "BEZPIECZEŃSTWO: proxy wykonuje polecenia na TYM komputerze (Claude, tryb acceptEdits)."
-warn "Każdy kto zna link steruje Twoją maszyną. Stała domena → włącz Cloudflare Access (tylko Twój email)."
+warn "Dostęp tylko z kluczem z kodu QR (rotuje przy każdym starcie). Link z QR = pełna kontrola — nie udostępniaj."
 echo
 printf "\033[1;36m▶ Stawiam tunel Cloudflare — QR pojawi się niżej, zeskanuj telefonem...\033[0m\n"
 
@@ -59,8 +65,8 @@ cloudflared tunnel --url "http://localhost:$PORT" 2>&1 | while IFS= read -r line
     url="$(printf '%s' "$line" | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1 || true)"
     if [ -n "$url" ]; then
       SHOWN=1
-      ( cd control && node qr.js "$url" ) 2>/dev/null \
-        || printf '\n>>> OTWÓRZ NA TELEFONIE: %s\n\n' "$url"
+      ( cd control && node qr.js "$url/#k=$PROXY_KEY" ) 2>/dev/null \
+        || printf '\n>>> OTWÓRZ NA TELEFONIE: %s\n\n' "$url/#k=$PROXY_KEY"
     fi
   fi
 done

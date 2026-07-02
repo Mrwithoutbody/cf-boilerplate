@@ -70,12 +70,18 @@ const chatView = [$('#hChat'), $('#log'), $('#f')];
 const log = $('#log'), q = $('#q'), f = $('#f'), mic = $('#mic'), styleSel = $('#style');
 let session = null;
 
+// Klucz dostępu z fragmentu URL (QR: #k=...). Fragment nie opuszcza
+// przeglądarki — nie ma go w requestach, Refererze ani logach tunelu.
+// Każdy fetch idzie z kluczem w headerze; server bez niego odpowiada 401.
+const KEY = (location.hash.match(/k=([0-9a-f]+)/) || [])[1] || '';
+const api = (url, opts = {}) => fetch(url, { ...opts, headers: { ...(opts.headers || {}), 'x-key': KEY } });
+
 function show(views){ [...listView, ...chatView].forEach(el => el.classList.add('hidden')); views.forEach(el => el.classList.remove('hidden')); }
 
 // ── Style: lista z serwera → dropdown, wybór w localStorage, słany z promptem ─
 (async () => {
   try {
-    const { styles = [] } = await (await fetch('/styles')).json();
+    const { styles = [] } = await (await api('/styles')).json();
     for (const s of styles) styleSel.add(new Option(s, s));
     const saved = localStorage.getItem('style');
     styleSel.value = styles.includes(saved) ? saved : (styles[0] || '');
@@ -86,7 +92,7 @@ styleSel.addEventListener('change', () => localStorage.setItem('style', styleSel
 // ── Adres aplikacji na Cloudflare (podgląd na drugim urządzeniu) ─
 (async () => {
   try {
-    const { url } = await (await fetch('/appurl')).json();
+    const { url } = await (await api('/appurl')).json();
     if (url) { const a = $('#appurl'); a.href = url; a.classList.remove('hidden'); }
   } catch {}
 })();
@@ -137,7 +143,9 @@ async function loadList(){
   show(listView);
   const box = $('#sessions'); box.innerHTML = '<div class="empty">…</div>';
   try {
-    const r = await fetch('/sessions'); const arr = await r.json();
+    const r = await api('/sessions');
+    if (r.status === 401) { box.innerHTML = '<div class="empty">Brak lub nieaktualny klucz — zeskanuj aktualny kod QR z terminala.</div>'; return; }
+    const arr = await r.json();
     if (!arr.length) { box.innerHTML = '<div class="empty">Brak sesji. Zacznij nową.</div>'; return; }
     box.innerHTML = '';
     for (const s of arr){
@@ -155,14 +163,14 @@ async function openSession(id, title){
   session = id; $('#chatTitle').textContent = title || 'Sesja';
   log.innerHTML = ''; show(chatView);
   try {
-    const r = await fetch('/session/'+id+'/history'); const blocks = await r.json();
+    const r = await api('/session/'+id+'/history'); const blocks = await r.json();
     for (const b of blocks) add(b.who, b.text);
   } catch(_){}
   q.focus();
 }
 
 $('#new').onclick = async () => {
-  const r = await fetch('/session/new', {method:'POST'}); const {id} = await r.json();
+  const r = await api('/session/new', {method:'POST'}); const {id} = await r.json();
   openSession(id, 'Nowa sesja');
 };
 $('#back').onclick = () => { session = null; loadList(); };
@@ -176,7 +184,7 @@ f.addEventListener('submit', async e => {
   try { actx ??= new (window.AudioContext || window.webkitAudioContext)(); } catch {}  // gest usera → odblokuj audio
   add('user', prompt); q.value = '';
   try {
-    const r = await fetch('/ask', {method:'POST', headers:{'content-type':'application/json'},
+    const r = await api('/ask', {method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ sessionId: session, prompt, style: styleSel.value })});
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '', lastClaude = '';
     for(;;){

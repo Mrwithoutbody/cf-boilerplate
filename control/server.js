@@ -1,12 +1,13 @@
 // Serwer-proxy: web UI + most do Claude Code (headless CLI, streaming).
 // Zarządzanie sesjami: lista sesji → rozmowa w sesji → zakończ → powrót do listy.
 // Telefon widzi to samo co terminal: tekst Claude, edycje plików, komendy.
-// WYSTAWIAĆ TYLKO za Cloudflare Access. Zero zależności — czysty Node.
+// Dostęp: capability URL — klucz we fragmencie linku z QR (#k=...), gate na
+// każdym endpoincie poza statycznym HTML. Zero zależności — czysty Node.
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
@@ -16,8 +17,13 @@ const APP_DIR = resolve(__dirname, '..', 'app');   // katalog budowanej aplikacj
 const STYLES_DIR = join(__dirname, 'styles');      // presety stylu odpowiedzi (*.md)
 const PORT = Number(process.env.PORT || 3000);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+// Klucz dostępu = jedyna granica zaufania. Rotuje z każdym startem (jak URL
+// tunelu). W QR ląduje we FRAGMENCIE (#k=...) — fragment nie opuszcza
+// przeglądarki: nie ma go w requestach, Refererze ani logach tunelu.
+const KEY = process.env.PROXY_KEY || randomBytes(16).toString('hex');
 // Headless = nie ma jak kliknąć zgody, komendy spoza listy są auto-odrzucane.
-// Biała lista pod protokół (deploy + git + npm), NIE bypass wszystkiego.
+// Guardrail przeciw pomyłkom Claude'a, NIE granica bezpieczeństwa — tą jest
+// gate z kluczem (git/npm i tak dają dowolne wykonanie, np. 'npm exec').
 const ALLOWED_TOOLS = ['Bash(npx wrangler:*)', 'Bash(git:*)', 'Bash(npm:*)'];
 // Katalog gdzie Claude Code trzyma transkrypty sesji dla APP_DIR (ścieżka → myślniki).
 const PROJDIR = join(homedir(), '.claude', 'projects', APP_DIR.replace(/[/.]/g, '-'));
@@ -156,12 +162,33 @@ function readBody(req) {
   return new Promise((ok) => {
     let b = ''; req.on('data', c => { b += c; if (b.length > 1e6) req.destroy(); });
     req.on('end', () => ok(b));
+    req.on('close', () => ok(''));   // po destroy() 'end' nie odpali — nie zostawiaj wiszącej promisy
   });
+}
+function checkKey(req) {
+  const k = String(req.headers['x-key'] || '');
+  return k.length === KEY.length && timingSafeEqual(Buffer.from(k), Buffer.from(KEY));
+}
+// Kolejka per sesja: drugi /ask na tę samą sesję czeka aż pierwszy skończy —
+// współbieżne 'claude --resume' na jednym transkrypcie to korupcja historii.
+const queues = new Map();
+function enqueue(id, task) {
+  const next = (queues.get(id) || Promise.resolve()).then(task, task);
+  queues.set(id, next);
+  next.finally(() => { if (queues.get(id) === next) queues.delete(id); });
+  return next;
 }
 
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   const path = u.pathname;
+
+  // Gate: jedne drzwi, jeden klucz. Bez klucza tylko statyczny HTML — sam
+  // w sobie bezużyteczny (UI bez klucza w hashu niczego nie wywoła).
+  // Custom header 'x-key' = przy cross-origin wymusza preflight → CSRF odpada.
+  if (!(req.method === 'GET' && (path === '/' || path === '/index.html')) && !checkKey(req)) {
+    return sendJSON(res, 401, { error: 'brak klucza — zeskanuj aktualny QR' });
+  }
 
   // Web UI
   if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
@@ -219,52 +246,60 @@ const server = http.createServer(async (req, res) => {
       'transfer-encoding': 'chunked',
     });
 
-    const emit = (o) => res.write(JSON.stringify(o) + '\n');
+    const emit = (o) => { if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(o) + '\n'); };
 
-    // Nowa sesja gdy plik jeszcze nie istnieje, inaczej wznów.
-    const started = existsSync(join(PROJDIR, sessionId + '.jsonl'));
-    const sys = await systemPrompt(styleName);
-    const args = ['--print', '--output-format', 'stream-json', '--verbose',
-                  '--permission-mode', 'acceptEdits', '--allowedTools', ...ALLOWED_TOOLS];
-    if (started) args.push('--resume', sessionId);
-    else args.push('--session-id', sessionId);
-    if (sys) args.push('--append-system-prompt', sys);
-    args.push('-p', prompt);
+    // Cała tura idzie przez kolejkę sesji. 'started' sprawdzany dopiero gdy
+    // poprzednia tura skończy — wcześniej nie wiadomo, czy transkrypt istnieje.
+    enqueue(sessionId, async () => {
+      if (res.destroyed || res.writableEnded) return;   // klient odpadł w kolejce
+      // Nowa sesja gdy plik jeszcze nie istnieje, inaczej wznów.
+      const started = existsSync(join(PROJDIR, sessionId + '.jsonl'));
+      const sys = await systemPrompt(styleName);
+      const args = ['--print', '--output-format', 'stream-json', '--verbose',
+                    '--permission-mode', 'acceptEdits', '--allowedTools', ...ALLOWED_TOOLS];
+      if (started) args.push('--resume', sessionId);
+      else args.push('--session-id', sessionId);
+      if (sys) args.push('--append-system-prompt', sys);
+      args.push('-p', prompt);
 
-    const child = spawn(CLAUDE_BIN, args, {
-      cwd: APP_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
-    });
+      await new Promise((done) => {
+        const child = spawn(CLAUDE_BIN, args, {
+          cwd: APP_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+        });
 
-    let buf = '';
-    child.stdout.on('data', chunk => {
-      buf += chunk.toString();
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
-        if (!line.trim()) continue;
-        try {
-          const ev = JSON.parse(line);
-          for (const blk of renderEvent(ev)) {
-            if (blk.who === 'user') continue;   // telefon już pokazał prompt usera
-            emit(blk);
+        let buf = '';
+        child.stdout.on('data', chunk => {
+          buf += chunk.toString();
+          let nl;
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+            if (!line.trim()) continue;
+            try {
+              const ev = JSON.parse(line);
+              for (const blk of renderEvent(ev)) {
+                if (blk.who === 'user') continue;   // telefon już pokazał prompt usera
+                emit(blk);
+              }
+            } catch { /* pomiń nie-JSON */ }
           }
-        } catch { /* pomiń nie-JSON */ }
-      }
+        });
+        child.stderr.on('data', d => emit({ who: 'result', text: '[err] ' + d.toString().slice(0, 300) }));
+        // Flaga chroni przed podwójnym res.end(): przy błędzie spawn Node emituje 'error' ORAZ 'close'.
+        let finished = false;
+        child.on('close', () => { if (finished) return; finished = true; emit({ who: 'done', text: '' }); res.end(); done(); });
+        child.on('error', e => { if (finished) return; finished = true; emit({ who: 'result', text: '[spawn error] ' + e.message }); res.end(); done(); });
+        res.on('close', () => { if (!res.writableEnded) child.kill(); });
+      });
     });
-    child.stderr.on('data', d => emit({ who: 'result', text: '[err] ' + d.toString().slice(0, 300) }));
-    // Flaga chroni przed podwójnym res.end(): przy błędzie spawn Node emituje 'error' ORAZ 'close'.
-    let finished = false;
-    child.on('close', () => { if (finished) return; finished = true; emit({ who: 'done', text: '' }); res.end(); });
-    child.on('error', e => { if (finished) return; finished = true; emit({ who: 'result', text: '[spawn error] ' + e.message }); res.end(); });
-    res.on('close', () => { if (!res.writableEnded) child.kill(); });
     return;
   }
 
   res.writeHead(404); res.end('not found');
 });
 
-server.listen(PORT, async () => {
-  console.log(`▶ proxy: http://localhost:${PORT}  (app: ${APP_DIR})`);
+// Loopback only: jedyne wejście z zewnątrz to tunel (łączy się lokalnie).
+server.listen(PORT, '127.0.0.1', async () => {
+  console.log(`▶ proxy: http://localhost:${PORT}/#k=${KEY}  (app: ${APP_DIR})`);
   console.log(`  sesje z: ${PROJDIR}`);
   const url = await getAppUrl();
   console.log(url ? `  🌐 aplikacja (podgląd wyników): ${url}`
