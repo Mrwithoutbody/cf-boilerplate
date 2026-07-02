@@ -2,6 +2,7 @@
 # Deploy produkcyjny na Cloudflare. Commit lokalny przed wypchnięciem.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+[ -f .env ] && { set -a; . ./.env; set +a; }   # CLOUDFLARE_ACCOUNT_ID itd.
 [ -d app ] || { echo "Brak app/. Uruchom setup.sh."; exit 1; }
 
 MSG="${1:-deploy: $(date +%F' '%T)}"

@@ -2,6 +2,7 @@
 # Nowy projekt: scaffold Cloudflare Worker + git lokalny + pierwszy deploy.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+[ -f .env ] && { set -a; . ./.env; set +a; }   # CLOUDFLARE_ACCOUNT_ID dla pierwszego deploy
 say(){ printf "\n\033[1;36m▶ %s\033[0m\n" "$*"; }
 ok(){  printf "\033[1;32m✔ %s\033[0m\n" "$*"; }
 ask(){ local p="$1" d="${2:-}"; local a; read -rp "$(printf '\033[1;33m? %s%s: \033[0m' "$p" "${d:+ [$d]}")" a; echo "${a:-$d}"; }

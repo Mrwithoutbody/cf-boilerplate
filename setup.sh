@@ -20,6 +20,29 @@ else
   wrangler login
 fi
 
+say "Konto Cloudflare"
+[ -f .env ] || cp .env.example .env
+if grep -q '^CLOUDFLARE_ACCOUNT_ID=.\+' .env; then
+  ok "account_id z .env: $(grep '^CLOUDFLARE_ACCOUNT_ID=' .env | cut -d= -f2)"
+else
+  who="$(wrangler whoami 2>/dev/null || true)"
+  n="$(printf '%s\n' "$who" | grep -coE '[0-9a-f]{32}' || true)"
+  if [ "${n:-0}" -gt 1 ]; then
+    echo "$who"
+    id="$(ask 'Masz kilka kont — wklej account_id do użycia' '')"
+    if [ -n "$id" ]; then
+      if grep -q '^CLOUDFLARE_ACCOUNT_ID=' .env; then
+        sed -i "s|^CLOUDFLARE_ACCOUNT_ID=.*|CLOUDFLARE_ACCOUNT_ID=$id|" .env
+      else
+        printf '\nCLOUDFLARE_ACCOUNT_ID=%s\n' "$id" >> .env
+      fi
+      ok "Zapisano account_id do .env"
+    fi
+  else
+    ok "Jedno konto — wybór niepotrzebny."
+  fi
+fi
+
 say "3/4 Nowy projekt czy istniejący?"
 echo "  [n] nowy  — scaffold aplikacji, git init, pierwszy deploy pod tym loginem"
 echo "  [e] istniejący — podłącz kod/Workera który już masz w tym katalogu"
