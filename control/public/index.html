@@ -9,7 +9,11 @@
   * { box-sizing: border-box; }
   body { margin:0; font:16px/1.5 system-ui,sans-serif; background:#0b0e14; color:#e6e6e6;
          display:flex; flex-direction:column; height:100dvh; }
-  header { padding:12px 16px; background:#11151f; font-weight:600; }
+  header { padding:12px 16px; background:#11151f; font-weight:600;
+           display:flex; align-items:center; gap:12px; justify-content:space-between; }
+  header .t { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #style { background:#0b0e14; color:#e6e6e6; border:1px solid #2a3142; border-radius:8px;
+           padding:6px 8px; font:inherit; font-weight:600; }
   #log { flex:1; overflow:auto; padding:16px; white-space:pre-wrap; word-break:break-word; }
   .msg { margin:0 0 14px; }
   .me { color:#7cc4ff; }
@@ -24,7 +28,10 @@
 </style>
 </head>
 <body>
-<header>🎙️ Sterownik projektu — mów lub pisz</header>
+<header>
+  <span class="t">🎙️ Sterownik projektu</span>
+  <select id="style" title="Styl odpowiedzi"></select>
+</header>
 <div id="log"></div>
 <form id="f">
   <button type="button" id="mic" title="Mów">🎤</button>
@@ -36,34 +43,76 @@ const log = document.getElementById('log');
 const q = document.getElementById('q');
 const f = document.getElementById('f');
 const mic = document.getElementById('mic');
+const styleSel = document.getElementById('style');
+
+// Style: lista z serwera → dropdown. Wybór w localStorage, wysyłany z promptem.
+// Zmiana bez restartu. Domyślnie pierwszy styl (żołnierski).
+(async () => {
+  try {
+    const { styles = [] } = await (await fetch('/styles')).json();
+    for (const s of styles) styleSel.add(new Option(s, s));
+    const saved = localStorage.getItem('style');
+    styleSel.value = styles.includes(saved) ? saved : (styles[0] || '');
+  } catch {}
+})();
+styleSel.addEventListener('change', () => localStorage.setItem('style', styleSel.value));
 
 function add(cls, text){ const d=document.createElement('div'); d.className='msg '+cls; d.textContent=text; log.appendChild(d); log.scrollTop=log.scrollHeight; return d; }
+
+// Sygnał końca odpowiedzi: krótki "ding" (WebAudio) + wibracja.
+// AudioContext tworzony leniwie przy wysłaniu (wymaga gestu użytkownika).
+let actx = null;
+function ding(){
+  try {
+    actx ??= new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.connect(g); g.connect(actx.destination);
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0.001, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.25, actx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.4);
+    o.start(); o.stop(actx.currentTime + 0.45);
+  } catch {}
+  navigator.vibrate?.(200);
+}
 
 f.addEventListener('submit', async e => {
   e.preventDefault();
   const prompt = q.value.trim(); if(!prompt) return;
+  try { actx ??= new (window.AudioContext || window.webkitAudioContext)(); } catch {}   // gest użytkownika — odblokuj audio
   add('me', '🗣️ '+prompt); q.value='';
   const out = add('out', ''); out.textContent='…';
   try {
-    const r = await fetch('/ask', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({prompt})});
+    const r = await fetch('/ask', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({prompt, style: styleSel.value})});
     const reader = r.body.getReader(); const dec = new TextDecoder(); out.textContent='';
     for(;;){ const {value,done}=await reader.read(); if(done)break; out.textContent+=dec.decode(value,{stream:true}); log.scrollTop=log.scrollHeight; }
   } catch(err){ out.textContent += '\n[błąd] '+err.message; }
+  ding();
 });
 
 // Głos: Web Speech API (pl-PL). Wynik ląduje w polu tekstowym do zatwierdzenia.
+// Uwaga: na Androidzie e.results potrafi dublować wpisy — iterujemy od e.resultIndex
+// i osobno zbieramy wyniki finalne, osobno tymczasowe (interim).
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (SR) {
   const rec = new SR(); rec.lang='pl-PL'; rec.interimResults=true; rec.continuous=false;
-  let base='';
+  let base='', finalT='';
   mic.addEventListener('click', () => {
     if (mic.classList.contains('rec')) { rec.stop(); return; }
-    base = q.value ? q.value+' ' : ''; rec.start();
+    base = q.value ? q.value+' ' : ''; finalT=''; rec.start();
   });
   rec.onstart = () => mic.classList.add('rec');
   rec.onend   = () => mic.classList.remove('rec');
   rec.onerror = () => mic.classList.remove('rec');
-  rec.onresult = e => { let t=''; for(const r of e.results) t+=r[0].transcript; q.value=base+t; };
+  rec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) finalT += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    q.value = base + finalT + interim;
+  };
 } else {
   mic.disabled = true; mic.title = 'Brak Web Speech API — pisz ręcznie';
 }
