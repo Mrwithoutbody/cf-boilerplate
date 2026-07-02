@@ -11,9 +11,16 @@
          display:flex; flex-direction:column; height:100dvh; }
   header { padding:12px 16px; background:#11151f; font-weight:600; display:flex; align-items:center; gap:10px; }
   header button { background:#2a3142; color:#e6e6e6; border:0; border-radius:8px; padding:6px 12px; font:inherit; cursor:pointer; }
-  header select { background:#0b0e14; color:#e6e6e6; border:1px solid #2a3142; border-radius:8px; padding:6px 8px; font:inherit; }
   header a { color:#7cc4ff; text-decoration:none; font-size:14px; }
-  #tts.off { opacity:.35; }
+
+  /* Panel opcji (⚙️) */
+  #opts { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:10; }
+  #opts .card { background:#11151f; border:1px solid #2a3142; border-radius:12px; padding:20px; min-width:280px; display:flex; flex-direction:column; gap:16px; }
+  #opts h3 { margin:0; font-size:16px; }
+  #opts label { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  #opts select { background:#0b0e14; color:#e6e6e6; border:1px solid #2a3142; border-radius:8px; padding:6px 8px; font:inherit; }
+  #opts input[type=checkbox] { width:20px; height:20px; accent-color:#2e7d32; }
+  #optsClose { background:#2a3142; color:#e6e6e6; border:0; border-radius:8px; padding:10px; font:inherit; cursor:pointer; }
   .grow { flex:1; }
   .hidden { display:none !important; }
 
@@ -53,9 +60,18 @@
 <header id="hChat" class="hidden">
   <button id="back">← Zakończ</button>
   <span id="chatTitle" class="grow">Sesja</span>
-  <select id="style" title="Styl odpowiedzi"></select>
-  <button type="button" id="tts" title="Czytaj podsumowanie na głos">🔊</button>
+  <button type="button" id="cog" title="Opcje">⚙️</button>
 </header>
+
+<!-- Panel: OPCJE (⚙️) -->
+<div id="opts" class="hidden">
+  <div class="card">
+    <h3>⚙️ Opcje</h3>
+    <label>Styl odpowiedzi <select id="style"></select></label>
+    <label>🔊 Głos i sonar <input type="checkbox" id="tts"></label>
+    <button id="optsClose">Zamknij</button>
+  </div>
+</div>
 <div id="log" class="hidden"></div>
 <form id="f" class="hidden">
   <button type="button" id="mic" title="Mów">🎤</button>
@@ -97,14 +113,20 @@ styleSel.addEventListener('change', () => localStorage.setItem('style', styleSel
   } catch {}
 })();
 
+// ── Panel opcji (⚙️): styl + głos, zamiast dwóch elementów w nagłówku ─
+const opts = $('#opts');
+$('#cog').onclick = () => opts.classList.remove('hidden');
+$('#optsClose').onclick = () => opts.classList.add('hidden');
+opts.addEventListener('click', e => { if (e.target === opts) opts.classList.add('hidden'); });  // tap w tło = zamknij
+
 // ── TTS: czytaj teksty Claude na bieżąco (kolejka utterances, bez cancel —
-// wiadomości czytane po kolei; ostatnia = podsumowanie z protokołu) ─
-const ttsBtn = $('#tts');
+// wiadomości czytane po kolei; ostatnia = podsumowanie z protokołu).
+// 🔊 wyłącza głos ORAZ sonar; ding końca tury zostaje. ─
+const ttsBox = $('#tts');
 let ttsOn = localStorage.getItem('tts') !== 'off';
-ttsBtn.classList.toggle('off', !ttsOn);
-ttsBtn.onclick = () => {
-  ttsOn = !ttsOn; localStorage.setItem('tts', ttsOn ? 'on' : 'off');
-  ttsBtn.classList.toggle('off', !ttsOn);
+ttsBox.checked = ttsOn;
+ttsBox.onchange = () => {
+  ttsOn = ttsBox.checked; localStorage.setItem('tts', ttsOn ? 'on' : 'off');
   if (!ttsOn) speechSynthesis?.cancel();
 };
 function speak(text){
@@ -135,6 +157,7 @@ function ding(){
 // Throttle — seria komend pod rząd to jeden ping, nie karabin. ─
 let lastPing = 0;
 function sonar(){
+  if (!ttsOn) return;   // 🔊 off = cisza także dla sonaru
   if (performance.now() - lastPing < 1500) return;
   lastPing = performance.now();
   try {
