@@ -136,12 +136,27 @@ ttsBox.onchange = () => {
   ttsOn = ttsBox.checked; localStorage.setItem('tts', ttsOn ? 'on' : 'off');
   if (!ttsOn) speechSynthesis?.cancel();
 };
-function speak(text){
+// Dwa głosy: Claude (domyślny pl) i echo usera (inny pl głos, a jak nie ma —
+// ten sam z wyższym tonem, żeby odróżnić kto mówi). Lista głosów bywa pusta
+// do zdarzenia 'voiceschanged'.
+let vClaude = null, vUser = null;
+function pickVoices(){
+  const pl = speechSynthesis.getVoices().filter(v => /pl/i.test(v.lang));
+  vClaude = pl[0] || null;
+  vUser = pl.find(v => v !== vClaude) || null;   // drugi głos jeśli istnieje
+}
+if (window.speechSynthesis){ pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
+// who: 'claude' (domyślnie) albo 'user' (echo tego co powiedział user).
+function speak(text, who){
   if (!ttsOn || !text || !window.speechSynthesis) return;
   try {
     const u = new SpeechSynthesisUtterance(text.slice(0, 600));
     u.lang = 'pl-PL';
-    u.rate = 1.15;              // odrobinę szybciej niż domyślne 1.0
+    if (who === 'user'){
+      u.voice = vUser || vClaude; u.rate = 1.2; u.pitch = vUser ? 1 : 1.4;   // brak 2. głosu → różnicuj tonem
+    } else {
+      u.voice = vClaude; u.rate = 1.15; u.pitch = 1;
+    }
     speechSynthesis.speak(u);   // dokleja do kolejki — nie przerywa czytanego
   } catch {}
 }
@@ -244,7 +259,8 @@ f.addEventListener('submit', async e => {
   try { actx ??= new (window.AudioContext || window.webkitAudioContext)(); } catch {}  // gest usera → odblokuj audio
   speechSynthesis?.cancel();   // nowa tura = nie doczytuj starej
   add('user', prompt); q.value = '';
-  $('#busy').classList.remove('hidden');   // wskaźnik: proxy pracuje
+  speak(prompt, 'user');       // app powtarza głosem co user powiedział (inny głos)
+  setBusy(true);               // belka zablokowana póki proxy pracuje
   try {
     const r = await api('/ask', {method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ sessionId: session, prompt, style: styleSel.value })});
@@ -264,8 +280,19 @@ f.addEventListener('submit', async e => {
       }
     }
   } catch(err){ add('result', '[błąd] '+err.message); }
-  finally { $('#busy').classList.add('hidden'); }
+  finally { setBusy(false); }
 });
+
+// Belka zablokowana w trakcie tury: pole, wyślij i mikrofon nieaktywne,
+// żeby user nie wysłał drugiego promptu zanim proxy skończy.
+const micSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+function setBusy(on){
+  $('#busy').classList.toggle('hidden', !on);
+  q.disabled = on; $('#send').disabled = on;
+  if (micSupported) mic.disabled = on;   // gdy brak Web Speech mic zostaje trwale wyłączony
+  q.placeholder = on ? 'Proxy pracuje… zaczekaj' : 'Powiedz albo napisz co zmienić…';
+  if (on) stopRec();   // gdyby mikrofon był aktywny — twardy stop
+}
 
 // ── Głos: Web Speech (pl-PL) ────────────────────────────────
 // continuous=false: Android w trybie continuous powtarza finalne wyniki (dublowanie).

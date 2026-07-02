@@ -13,3 +13,6 @@ Cloudflare to serwer dev — tam się testuje, nie lokalnie.
   Powiedz: co zmienione, czy wdrożone, co user ma sprawdzić.
 - W trakcie pracy komunikuj się normalnie; reżim 2-3 zdań dotyczy tylko
   podsumowania na końcu.
+- Cały tekst dla usera (i w trakcie, i podsumowanie) pisz zwykłym tekstem —
+  bez markdown: żadnych nagłówków, gwiazdek, list wypunktowanych, backticków.
+  Wszystko ląduje w czytniku na telefonie, gdzie składnia brzmi jak śmieci.
