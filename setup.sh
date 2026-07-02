@@ -25,12 +25,17 @@ Ten projekt deployuje WYŁĄCZNIE na jedno konto — przez token API ograniczony
 NIE używamy 'wrangler login' (globalny OAuth widzi wszystkie Twoje konta = brak izolacji,
 ryzyko wgrania w cudzą produkcję).
 
-Utwórz token (jednorazowo, dla tego jednego konta):
-  Cloudflare dash → My Profile → API Tokens → Create Token
-  → szablon "Edit Cloudflare Workers"
-  → Account Resources = TYLKO to jedno konto (Include → wybierz jedno)
-  → Create → skopiuj token
-Account ID: prawy panel na stronie konta w dashboardzie.
+Utwórz token z szablonu, zawężony do JEDNEGO konta (to zawężenie = izolacja):
+  1) dash.cloudflare.com/profile/api-tokens → Create Token
+     (ta strona ma szablony; tokeny na poziomie konta NIE mają — custom builder)
+  2) API token templates → "Edit Cloudflare Workers" → Use template
+  3) Account Resources → Include → Specific account → TO jedno konto
+     (bez tego kroku przycisk "Review token" jest nieaktywny)
+  4) Zone Resources → zmień "Specific zone" na "All zones from an account"
+     → wybierz to konto (na *.workers.dev stref nie masz; Routes deploya nie rusza)
+  5) Review token → Create Token → skopiuj token
+Account ID: Workers & Pages → prawy panel "Account ID", albo z URL konta
+  (dash.cloudflare.com/<ACCOUNT_ID>/...).
 
 Token trafi do .env (jest w .gitignore — nie commituje się).
 TXT
@@ -52,11 +57,5 @@ case "$mode" in
   *)   die "Nieznany wybór: $mode" ;;
 esac
 
-say "4/4 Proxy sterujący (głos z telefonu) — opcjonalne"
-if [ "$(ask 'Postawić serwer-proxy + tunnel teraz? t/n' n)" = t ]; then
-  bash scripts/proxy.sh
-else
-  echo "Później: bash scripts/proxy.sh"
-fi
-
-ok "Gotowe. Deploy: scripts/deploy.sh  ·  Preview: scripts/preview.sh"
+say "4/4 Proxy sterujący (głos z telefonu) — startuje. Ctrl+C = stop, później: bash scripts/proxy.sh"
+bash scripts/proxy.sh
