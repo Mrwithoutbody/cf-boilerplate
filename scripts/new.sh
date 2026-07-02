@@ -10,7 +10,10 @@ ask(){ local p="$1" d="${2:-}"; local a; read -rp "$(printf '\033[1;33m? %s%s: \
 
 [ -d app ] && { ok "Katalog app/ już istnieje — pomijam scaffold."; exit 0; }
 
-NAME="$(ask 'Nazwa projektu (a-z0-9-)' my-app)"
+# Domyślna nazwa = nazwa folderu, znormalizowana do a-z0-9- (wymóg Cloudflare).
+DEF_NAME="$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//')"
+[ -n "$DEF_NAME" ] || DEF_NAME=my-app
+NAME="$(ask 'Nazwa projektu (a-z0-9-)' "$DEF_NAME")"
 FRAMEWORK="$(ask 'Framework: hono / react-router / none' hono)"
 
 say "Scaffold ($FRAMEWORK)"
@@ -19,6 +22,17 @@ if [ "$FRAMEWORK" = none ]; then
 else
   npm create cloudflare@latest app -- --framework="$FRAMEWORK" --no-git --no-deploy
 fi
+
+# Scaffold nazywa Workera po katalogu ("app"). Nadaj nazwę projektu → ładny
+# URL <NAME>.<sub>.workers.dev zamiast app.<sub>.workers.dev.
+for wf in app/wrangler.jsonc app/wrangler.json app/wrangler.toml; do
+  [ -f "$wf" ] || continue
+  case "$wf" in
+    *.toml) sed -i "s/^name[[:space:]]*=[[:space:]]*\"app\"/name = \"$NAME\"/" "$wf" ;;
+    *)      sed -i "s/\"name\"[[:space:]]*:[[:space:]]*\"app\"/\"name\": \"$NAME\"/" "$wf" ;;
+  esac
+done
+ok "Worker nazwany: $NAME"
 
 say "Instancja → projekt"
 rm -f .is-boilerplate && ok "Marker usunięty — to jest teraz projekt (nie boilerplate)."

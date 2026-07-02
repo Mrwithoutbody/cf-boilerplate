@@ -9,44 +9,67 @@
   * { box-sizing: border-box; }
   body { margin:0; font:16px/1.5 system-ui,sans-serif; background:#0b0e14; color:#e6e6e6;
          display:flex; flex-direction:column; height:100dvh; }
-  header { padding:12px 16px; background:#11151f; font-weight:600;
-           display:flex; align-items:center; gap:12px; justify-content:space-between; }
-  header .t { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #style { background:#0b0e14; color:#e6e6e6; border:1px solid #2a3142; border-radius:8px;
-           padding:6px 8px; font:inherit; font-weight:600; }
-  #log { flex:1; overflow:auto; padding:16px; white-space:pre-wrap; word-break:break-word; }
-  .msg { margin:0 0 14px; }
-  .me { color:#7cc4ff; }
-  .out { background:#11151f; border-radius:10px; padding:12px; }
+  header { padding:12px 16px; background:#11151f; font-weight:600; display:flex; align-items:center; gap:10px; }
+  header button { background:#2a3142; color:#e6e6e6; border:0; border-radius:8px; padding:6px 12px; font:inherit; cursor:pointer; }
+  header select { background:#0b0e14; color:#e6e6e6; border:1px solid #2a3142; border-radius:8px; padding:6px 8px; font:inherit; }
+  .grow { flex:1; }
+  .hidden { display:none !important; }
+
+  /* Lista sesji */
+  #list { flex:1; overflow:auto; padding:12px; }
+  #new { width:100%; background:#2e7d32; color:#fff; border:0; border-radius:10px; padding:14px; font:inherit; font-weight:600; cursor:pointer; margin-bottom:12px; }
+  .sess { background:#11151f; border:1px solid #2a3142; border-radius:10px; padding:12px 14px; margin-bottom:8px; cursor:pointer; }
+  .sess .t { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sess .m { color:#7a8699; font-size:13px; margin-top:2px; }
+  .empty { color:#7a8699; text-align:center; padding:24px; }
+
+  /* Rozmowa */
+  #log { flex:1; overflow:auto; padding:16px; }
+  .msg { margin:0 0 12px; white-space:pre-wrap; word-break:break-word; }
+  .user { color:#7cc4ff; }
+  .claude { background:#11151f; border-radius:10px; padding:10px 12px; }
+  .tool { color:#c9a227; font-family:ui-monospace,monospace; font-size:13px; }
+  .result { color:#7a8699; font-family:ui-monospace,monospace; font-size:12.5px; border-left:2px solid #2a3142; padding-left:8px; }
   form { display:flex; gap:8px; padding:12px; background:#11151f; padding-bottom:max(12px,env(safe-area-inset-bottom)); }
   textarea { flex:1; resize:none; background:#0b0e14; color:#e6e6e6; border:1px solid #2a3142;
              border-radius:10px; padding:10px; font:inherit; min-height:48px; }
-  button { border:0; border-radius:10px; padding:0 16px; font:inherit; font-weight:600; cursor:pointer; }
-  #mic { background:#2a3142; color:#e6e6e6; min-width:52px; font-size:20px; }
+  #mic { background:#2a3142; color:#e6e6e6; min-width:52px; font-size:20px; border:0; border-radius:10px; cursor:pointer; }
   #mic.rec { background:#c0392b; }
-  #send { background:#2e7d32; color:#fff; }
+  #send { background:#2e7d32; color:#fff; border:0; border-radius:10px; padding:0 16px; font:inherit; font-weight:600; cursor:pointer; }
 </style>
 </head>
 <body>
-<header>
-  <span class="t">🎙️ Sterownik projektu</span>
+
+<!-- Widok: LISTA SESJI -->
+<header id="hList">🗂️ Sesje projektu <span class="grow"></span></header>
+<div id="list">
+  <button id="new">➕ Nowa sesja</button>
+  <div id="sessions"></div>
+</div>
+
+<!-- Widok: ROZMOWA -->
+<header id="hChat" class="hidden">
+  <button id="back">← Zakończ</button>
+  <span id="chatTitle" class="grow">Sesja</span>
   <select id="style" title="Styl odpowiedzi"></select>
 </header>
-<div id="log"></div>
-<form id="f">
+<div id="log" class="hidden"></div>
+<form id="f" class="hidden">
   <button type="button" id="mic" title="Mów">🎤</button>
   <textarea id="q" placeholder="Powiedz albo napisz co zmienić…" autocomplete="off"></textarea>
   <button type="submit" id="send">Wyślij</button>
 </form>
-<script>
-const log = document.getElementById('log');
-const q = document.getElementById('q');
-const f = document.getElementById('f');
-const mic = document.getElementById('mic');
-const styleSel = document.getElementById('style');
 
-// Style: lista z serwera → dropdown. Wybór w localStorage, wysyłany z promptem.
-// Zmiana bez restartu. Domyślnie pierwszy styl (żołnierski).
+<script>
+const $ = s => document.querySelector(s);
+const listView = [$('#hList'), $('#list')];
+const chatView = [$('#hChat'), $('#log'), $('#f')];
+const log = $('#log'), q = $('#q'), f = $('#f'), mic = $('#mic'), styleSel = $('#style');
+let session = null;
+
+function show(views){ [...listView, ...chatView].forEach(el => el.classList.add('hidden')); views.forEach(el => el.classList.remove('hidden')); }
+
+// ── Style: lista z serwera → dropdown, wybór w localStorage, słany z promptem ─
 (async () => {
   try {
     const { styles = [] } = await (await fetch('/styles')).json();
@@ -57,17 +80,13 @@ const styleSel = document.getElementById('style');
 })();
 styleSel.addEventListener('change', () => localStorage.setItem('style', styleSel.value));
 
-function add(cls, text){ const d=document.createElement('div'); d.className='msg '+cls; d.textContent=text; log.appendChild(d); log.scrollTop=log.scrollHeight; return d; }
-
-// Sygnał końca odpowiedzi: krótki "ding" (WebAudio) + wibracja.
-// AudioContext tworzony leniwie przy wysłaniu (wymaga gestu użytkownika).
+// ── Sygnał końca odpowiedzi: ding (WebAudio) + wibracja ─────
 let actx = null;
 function ding(){
   try {
     actx ??= new (window.AudioContext || window.webkitAudioContext)();
     const o = actx.createOscillator(), g = actx.createGain();
-    o.connect(g); g.connect(actx.destination);
-    o.frequency.value = 880;
+    o.connect(g); g.connect(actx.destination); o.frequency.value = 880;
     g.gain.setValueAtTime(0.001, actx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.25, actx.currentTime + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.4);
@@ -76,46 +95,103 @@ function ding(){
   navigator.vibrate?.(200);
 }
 
+function add(who, text){
+  const d = document.createElement('div');
+  d.className = 'msg ' + who;
+  d.textContent = (who==='user'?'🗣️ ':who==='tool'?'🔧 ':who==='result'?'↳ ':'') + text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+
+// ── Lista sesji ─────────────────────────────────────────────
+async function loadList(){
+  show(listView);
+  const box = $('#sessions'); box.innerHTML = '<div class="empty">…</div>';
+  try {
+    const r = await fetch('/sessions'); const arr = await r.json();
+    if (!arr.length) { box.innerHTML = '<div class="empty">Brak sesji. Zacznij nową.</div>'; return; }
+    box.innerHTML = '';
+    for (const s of arr){
+      const el = document.createElement('div'); el.className = 'sess';
+      const when = new Date(s.mtime).toLocaleString('pl-PL');
+      el.innerHTML = `<div class="t"></div><div class="m">${s.count} wiad. · ${when}</div>`;
+      el.querySelector('.t').textContent = s.title;
+      el.onclick = () => openSession(s.id, s.title);
+      box.appendChild(el);
+    }
+  } catch(e){ box.innerHTML = '<div class="empty">Błąd: '+e.message+'</div>'; }
+}
+
+async function openSession(id, title){
+  session = id; $('#chatTitle').textContent = title || 'Sesja';
+  log.innerHTML = ''; show(chatView);
+  try {
+    const r = await fetch('/session/'+id+'/history'); const blocks = await r.json();
+    for (const b of blocks) add(b.who, b.text);
+  } catch(_){}
+  q.focus();
+}
+
+$('#new').onclick = async () => {
+  const r = await fetch('/session/new', {method:'POST'}); const {id} = await r.json();
+  openSession(id, 'Nowa sesja');
+};
+$('#back').onclick = () => { session = null; loadList(); };
+
+// ── Wysyłanie + streaming odpowiedzi ────────────────────────
 f.addEventListener('submit', async e => {
   e.preventDefault();
-  const prompt = q.value.trim(); if(!prompt) return;
-  try { actx ??= new (window.AudioContext || window.webkitAudioContext)(); } catch {}   // gest użytkownika — odblokuj audio
-  add('me', '🗣️ '+prompt); q.value='';
-  const out = add('out', ''); out.textContent='…';
+  const prompt = q.value.trim(); if(!prompt || !session) return;
+  try { actx ??= new (window.AudioContext || window.webkitAudioContext)(); } catch {}  // gest usera → odblokuj audio
+  add('user', prompt); q.value = '';
   try {
-    const r = await fetch('/ask', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({prompt, style: styleSel.value})});
-    const reader = r.body.getReader(); const dec = new TextDecoder(); out.textContent='';
-    for(;;){ const {value,done}=await reader.read(); if(done)break; out.textContent+=dec.decode(value,{stream:true}); log.scrollTop=log.scrollHeight; }
-  } catch(err){ out.textContent += '\n[błąd] '+err.message; }
-  ding();
+    const r = await fetch('/ask', {method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ sessionId: session, prompt, style: styleSel.value })});
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    for(;;){
+      const {value,done} = await reader.read(); if(done) break;
+      buf += dec.decode(value,{stream:true});
+      let nl;
+      while((nl = buf.indexOf('\n')) >= 0){
+        const line = buf.slice(0,nl); buf = buf.slice(nl+1);
+        if(!line.trim()) continue;
+        let o; try { o = JSON.parse(line); } catch { continue; }
+        if(o.who === 'done'){ ding(); continue; }
+        add(o.who, o.text);
+      }
+    }
+  } catch(err){ add('result', '[błąd] '+err.message); }
 });
 
-// Głos: Web Speech API (pl-PL). Wynik ląduje w polu tekstowym do zatwierdzenia.
-// Uwaga: na Androidzie e.results potrafi dublować wpisy — iterujemy od e.resultIndex
-// i osobno zbieramy wyniki finalne, osobno tymczasowe (interim).
+// ── Głos: Web Speech (pl-PL), ciągłe słuchanie do ręki ──────
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (SR) {
-  const rec = new SR(); rec.lang='pl-PL'; rec.interimResults=true; rec.continuous=false;
-  let base='', finalT='';
+  const rec = new SR(); rec.lang='pl-PL'; rec.interimResults=true; rec.continuous=true;
+  // Bug (Android): iteracja e.results od zera dublowała już zatwierdzone wpisy.
+  // Fix: idź od e.resultIndex, finalne kumuluj w finalT (trwa przez auto-restart),
+  // tymczasowe (interim) licz osobno.
+  let base='', finalT='', listening=false;
   mic.addEventListener('click', () => {
-    if (mic.classList.contains('rec')) { rec.stop(); return; }
-    base = q.value ? q.value+' ' : ''; finalT=''; rec.start();
+    if (listening) { listening=false; rec.stop(); return; }
+    base = q.value ? q.value+' ' : ''; finalT=''; listening=true;
+    try { rec.start(); } catch(_){}
   });
   rec.onstart = () => mic.classList.add('rec');
-  rec.onend   = () => mic.classList.remove('rec');
-  rec.onerror = () => mic.classList.remove('rec');
+  rec.onerror = () => { listening=false; mic.classList.remove('rec'); };
+  rec.onend = () => {
+    if (listening) { try { rec.start(); } catch(_){} return; }  // auto-restart, finalT trwa
+    mic.classList.remove('rec');
+  };
   rec.onresult = e => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    let interim='';
+    for (let i=e.resultIndex; i<e.results.length; i++) {
       const r = e.results[i];
-      if (r.isFinal) finalT += r[0].transcript;
-      else interim += r[0].transcript;
+      if (r.isFinal) finalT += r[0].transcript; else interim += r[0].transcript;
     }
     q.value = base + finalT + interim;
   };
-} else {
-  mic.disabled = true; mic.title = 'Brak Web Speech API — pisz ręcznie';
-}
+} else { mic.disabled = true; mic.title = 'Brak Web Speech API — pisz ręcznie'; }
+
+loadList();
 </script>
 </body>
 </html>

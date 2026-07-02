@@ -20,20 +20,47 @@ if ! command -v cloudflared >/dev/null; then
 fi
 
 [ -f .env ] || cp .env.example .env
-grep -q '^ANTHROPIC_API_KEY=.\+' .env 2>/dev/null || warn "Ustaw ANTHROPIC_API_KEY w .env przed startem proxy."
+# Proxy woła lokalny 'claude' (headless). Domyślnie używa Twojej sesji Claude Code
+# (abonament, ~/.claude). ANTHROPIC_API_KEY NIE jest potrzebny — ustaw go tylko
+# jeśli świadomie chcesz iść przez płatne API zamiast abonamentu.
+CBIN="$(command -v claude 2>/dev/null || true)"
+if [ -x "$CBIN" ]; then
+  export CLAUDE_BIN="$CBIN"          # przekaż dokładną ścieżkę binarki do serwera
+  ok "claude CLI: $(claude --version 2>/dev/null | head -1)  ($CBIN)"
+else
+  warn "Brak 'claude' w PATH. Zainstaluj Claude Code i zaloguj: 'claude' → /login."
+fi
 
 ( cd control && npm install --silent )
 ok "Zależności proxy zainstalowane."
 
 PORT="$(ask 'Port proxy' 3000)"
-echo
-echo "Tunel Cloudflare (osobny terminal):"
-echo "  cloudflared tunnel --url http://localhost:$PORT     # szybki trycloudflare.com"
-echo
-warn "BEZPIECZEŃSTWO: dla stałej domeny włącz Cloudflare Access (polityka = tylko Twój email, OTP)."
-warn "Proxy wykonuje polecenia na tym komputerze. Bez Access = otwarte drzwi."
+set -a; . ./.env; set +a
 
-if [ "$(ask 'Odpalić serwer teraz? t/n' t)" = t ]; then
-  set -a; . ./.env; set +a
-  ( cd control && PORT="$PORT" node server.js )
-fi
+# Serwer w tle (most do lokalnego Claude Code).
+( cd control && PORT="$PORT" node server.js ) &
+SRV=$!
+# Sprzątanie: ubij serwer i tunel przy wyjściu (Ctrl+C).
+cleanup(){ kill "$SRV" 2>/dev/null || true; [ -n "${TUN:-}" ] && kill "$TUN" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+sleep 1
+ok "Serwer: http://localhost:$PORT"
+
+warn "BEZPIECZEŃSTWO: proxy wykonuje polecenia na TYM komputerze (Claude, tryb acceptEdits)."
+warn "Każdy kto zna link steruje Twoją maszyną. Stała domena → włącz Cloudflare Access (tylko Twój email)."
+echo
+printf "\033[1;36m▶ Stawiam tunel Cloudflare — QR pojawi się niżej, zeskanuj telefonem...\033[0m\n"
+
+# Tunel: wychwyć publiczny URL z logu i pokaż QR (raz).
+SHOWN=""
+cloudflared tunnel --url "http://localhost:$PORT" 2>&1 | while IFS= read -r line; do
+  printf '%s\n' "$line"
+  if [ -z "$SHOWN" ]; then
+    url="$(printf '%s' "$line" | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1 || true)"
+    if [ -n "$url" ]; then
+      SHOWN=1
+      ( cd control && node qr.js "$url" ) 2>/dev/null \
+        || printf '\n>>> OTWÓRZ NA TELEFONIE: %s\n\n' "$url"
+    fi
+  fi
+done

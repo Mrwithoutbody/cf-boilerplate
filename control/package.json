@@ -6,5 +6,8 @@
   "description": "Web UI głosowy + most do Claude Code. Sterowanie z telefonu przez Cloudflare Tunnel.",
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
   }
 }
