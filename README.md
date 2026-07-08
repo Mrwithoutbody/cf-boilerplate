@@ -1,87 +1,45 @@
 # futurestack
 
-Start projektu na Cloudflare, git lokalny, sterowanie głosem z telefonu.
+Rozwijaj projekt (dowolny stack) głosem z telefonu → deploy LIVE na produkcję. Żyje w
+`.fs/` w Twoim projekcie: kod i git zostają w roocie, `.fs/` w `.gitignore`. Nie rusza kodu.
 
-Futurestack żyje w `.fs/` **wewnątrz Twojego projektu**. Twój kod zostaje w roocie
-(własny git, własna struktura); `.fs/` to odizolowane narzędzia (deploy + proxy),
-dopisane do `.gitignore` — zero miszmaszu „który plik do czego".
-
-## 1. Zainstaluj w projekcie (istniejącym albo nowym pustym folderze)
+## 1. Instalacja (istniejący projekt albo pusty folder)
 ```bash
-cd ~/projekty/moja-apka           # Twój projekt (z kodem) albo pusty folder na nowy
-npx degit Mrwithoutbody/futurestack/.fs .fs   # pobiera SAM payload (podkatalog .fs/) — bez gita, bez historii
-cd .fs
+cd ~/projekty/moja-apka
+npx degit Mrwithoutbody/futurestack/.fs .fs   # sam payload, bez gita/historii
+cd .fs && ./setup.sh                            # albo: ./setup.sh ~/kod/src (import kodu)
 ```
-Działa z projektami, których futurestack NIE zakładał — nie rusza Twojego kodu
-ani gita, tylko dokłada `.fs/` obok.
 
-## 2. Token Cloudflare (szablon, zawężony do jednego konta)
-Izolacja zależy od **zakresu** tokenu, nie od właściciela: token zawężony do
-jednego konta deployuje tylko na to konto, inne są nieosiągalne.
+## 2. Token Cloudflare (tylko gdy target = Cloudflare)
+Token zawężony do JEDNEGO konta = izolacja (NIE `wrangler login`). `.../profile/api-tokens`
+→ szablon **Edit Cloudflare Workers** → **Account Resources: Include > Specific account** →
+Zone: **All zones from an account** → Create. Account ID: **Workers & Pages** → prawy panel.
+Wklejasz przy setup (do `.fs/.env`, gitignored); setup pomija gdy target nie wymaga (Expo).
 
-1. `dash.cloudflare.com/profile/api-tokens` → **Create Token**
-   (użyj tej strony — tokeny na poziomie konta NIE mają szablonów, wpadniesz
-   w ręczny custom builder)
-2. Sekcja **API token templates** → przy **„Edit Cloudflare Workers"** klik **Use template**
-3. **Account Resources** → `Include` → `Specific account` → wybierz **to jedno konto**
-   (to zawężenie = izolacja; bez niego przycisk „Review token" jest nieaktywny)
-4. **Zone Resources** → szablon domaga się strefy. Na `*.workers.dev` stref nie
-   masz → zmień `Specific zone` na **`All zones from an account`** → wybierz to
-   samo konto. (Workers Routes dotyczy tylko własnych domen — deploya nie rusza.)
-5. **Review token** → **Create Token** → **Copy** (token widać RAZ)
+## 3. Setup — bez pytań
+Auto-detekcja: **root ma kod → podłącza, pusty → scaffold** (wybór stacka:
+cloudflare / vite / astro / next / expo / własna). Kod zawsze w roocie.
 
-**Account ID** (strona tokenu go NIE pokazuje) — weź z jednego z dwóch miejsc:
-- Twoje konto → **Workers & Pages** → prawy panel **„Account ID"** (przycisk kopiowania)
-- albo z URL dowolnej strony konta: `dash.cloudflare.com/`**`<ACCOUNT_ID>`**`/...`
+## 4. Deploy — target wykrywany (styl MCP), nie hardcode
+Providery w `.fs/targets/` same sprawdzają projekt; pierwszy trafiony wygrywa:
 
-## 3. Setup
+| stack | deploy | creds CF |
+|---|---|---|
+| Cloudflare Pages / Workers | `npm run deploy` / `wrangler deploy` | tak |
+| Expo / RN | `eas build` | nie |
+| npm (Next/Nuxt/...) | `npm run deploy` | gdy wrangler |
+
+Przy setup wybierasz target **raz** (domyślny = wykryty) → `.fs/target.env`. Nowy stack =
+plik w `.fs/targets/`. Override `.fs/target.env`: `FS_TARGET` / `FS_DEPLOY` / `FS_NEEDS_CF`
+/ `FS_ALLOW=cargo,go` (komendy dla Claude) / `FS_APP_URL`. Ręcznie: `.fs/scripts/deploy.sh`.
+
+## 5. Głos z telefonu + Deploy LIVE
+Proxy woła lokalny `claude` (Twoja sesja; `ANTHROPIC_API_KEY` niepotrzebny). Wymóg: `claude` w PATH, zalogowany.
 ```bash
-./setup.sh                    # wykrywa sam: root ma kod → podłącza, pusty → scaffold
-./setup.sh ~/kod/moja-apka    # import istniejącego kodu ze ścieżki → root projektu
+bash .fs/scripts/proxy.sh      # serwer + tunel + QR, jeden terminal
 ```
-Wklej `CLOUDFLARE_ACCOUNT_ID` i `CLOUDFLARE_API_TOKEN`. Reszta bez pytań:
-**root ma kod → podłącza istniejący, pusty → scaffolduje nowy.**
-Nowy: wybór stacka (cloudflare / vite / astro / next / expo / własna komenda).
-Kod zawsze w roocie projektu (nie w podfolderze); `.fs/` obok, w `.gitignore`.
+Skanujesz **QR** → web UI. Mów/pisz → Claude zmienia kod w roocie. Przycisk **🚀** →
+potwierdzenie → deploy na **produkcję** (guarded, target-aware), wynik streamuje na żywo.
 
-## 4. Deploy — target wykrywany, nie hardcode
-```bash
-.fs/scripts/deploy.sh "opis"     # produkcja (z roota projektu)
-.fs/scripts/preview.sh           # preview, bez ruszania produkcji
-```
-Stack **podmienialny** (styl MCP): providery w `.fs/targets/` same sprawdzają
-projekt, pierwszy trafiony wygrywa. Ogarnięte out-of-box:
-
-| stack | wykrywa po | deploy | creds CF? |
-|---|---|---|---|
-| Cloudflare Pages | `@astrojs/cloudflare` / `pages deploy` | `npm run deploy` | tak |
-| Cloudflare Workers | `wrangler.*` | `wrangler deploy` | tak |
-| Expo / RN | `expo` / `app.json` | `eas build` | **nie** |
-| npm (Next/Nuxt/...) | skrypt `deploy` w package.json | `npm run deploy` | tylko gdy wrangler |
-
-Przy `setup.sh` wybierasz target **raz** z listy (domyślny = wykryty, Enter
-akceptuje) — zapis do `.fs/target.env`, deploy z telefonu już nie pyta. Nowy
-stack = wrzuć plik do `.fs/targets/`, sam pojawi się w wyborze. Ręczne
-nadpisanie: `.fs/target.env` (`FS_TARGET=` / `FS_DEPLOY=` / `FS_NEEDS_CF=0` /
-`FS_ALLOW=cargo,go` — komendy dla Claude z telefonu / `FS_APP_URL=` — URL podglądu).
-Setup pomija token CF gdy target go nie potrzebuje.
-
-## 5. Sterowanie głosem z telefonu
-Proxy woła **lokalny Claude Code** (`claude`), używa Twojej sesji/abonamentu —
-`ANTHROPIC_API_KEY` NIE jest potrzebny (ustaw go tylko dla płatnego API).
-Wymagane: `claude` w PATH i zalogowany (`claude` → `/login`).
-```bash
-bash .fs/scripts/proxy.sh      # serwer + tunel + kod QR — jedno polecenie, jeden terminal
-```
-W terminalu pojawi się **kod QR** — zeskanuj aparatem telefonu, otworzy się web UI.
-Mów (🎤) albo pisz, Claude Code zmienia kod w roocie projektu. Ctrl+C ubija serwer i tunel.
-
-**🚀 Deploy LIVE z telefonu:** przycisk `🚀` w sesji → potwierdzenie → wypycha na
-**produkcję** przez guarded `deploy.sh` (wykryty target + guard scoped-token +
-commit). Działa dla każdego stacka — komenda z wybranego targetu, nie przez
-allowlistę Claude. Wynik streamuje się na żywo, na końcu `✅ LIVE`.
-
-🔑 Dostęp chroni **klucz w linku z QR** (rotuje przy każdym starcie proxy; server
-odrzuca requesty bez niego, nasłuchuje tylko na loopbacku). Link z QR = pełna
-kontrola nad Twoim komputerem — traktuj jak hasło, nie udostępniaj i nie wklejaj
-nigdzie. Po restarcie proxy stary link umiera — zeskanuj nowy QR.
+🔑 Dostęp chroni **klucz w linku z QR** (rotuje co start, tylko loopback). Link = pełna
+kontrola nad komputerem — traktuj jak hasło. Restart proxy = nowy QR, stary link umiera.
