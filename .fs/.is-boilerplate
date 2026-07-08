@@ -1,4 +1,6 @@
 Ten plik oznacza katalog jako DEV boilerplate. Dopóki istnieje — deploy jest ZABLOKOWANY.
 scripts/new.sh i scripts/link.sh usuwają go, gdy z instancji tworzysz realny projekt.
-Nigdy nie deployuj z boilerplate. Pobierz instancję do osobnego folderu:
-  npx degit Mrwithoutbody/cf-boilerplate moja-apka
+Nigdy nie deployuj z boilerplate. Zainstaluj futurestack w SWOIM projekcie jako .fs/:
+  cd ~/moj-projekt
+  npx degit Mrwithoutbody/futurestack/.fs .fs
+  cd .fs && ./setup.sh
