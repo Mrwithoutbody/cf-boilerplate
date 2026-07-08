@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Boilerplate startowy: Cloudflare-only + git lokalny + proxy głosowy.
 # Izolacja per konto: token API SCOPED na jedno konto (NIE 'wrangler login').
-# Użycie: pobierz instancję do osobnego folderu, potem: ./setup.sh
+# Model: futurestack żyje w .fs/ WEWNĄTRZ Twojego projektu; kod projektu w roocie.
+# Użycie: w projekcie → npx degit ...futurestack .fs && cd .fs && ./setup.sh
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")"                   # .fs/ (tu są narzędzia)
+PROJECT="$(cd .. && pwd)"              # projekt = rodzic .fs/ (tu jest/ląduje kod)
+
+# Opcjonalny import: ./setup.sh /sciezka/do/kodu → kopiuje kod do roota projektu.
+SRC="${1:-}"
 
 say(){ printf "\n\033[1;36m▶ %s\033[0m\n" "$*"; }
 ok(){  printf "\033[1;32m✔ %s\033[0m\n" "$*"; }
@@ -15,11 +20,32 @@ setkv(){ local k="$1" v="$2"; if grep -q "^$k=" .env; then sed -i "s|^$k=.*|$k=$
 say "1/4 Sprawdzam narzędzia"
 bash scripts/check.sh
 
-say "2/4 Konto Cloudflare — token SCOPED na jedno konto"
+# Czy w roocie projektu jest już kod (cokolwiek poza samym .fs/)?
+has_code(){ [ -n "$(ls -A "$PROJECT" 2>/dev/null | grep -vx '.fs')" ]; }
+export PROJECT
+
+# Istniejący projekt → wybór targetu deployu (RAZ, zapis do .fs/target.env).
+# Wykrywa domyślny, user potwierdza/zmienia. Pusty (nowy) → target znany po scaffoldzie.
+has_code && bash scripts/pick-target.sh
+
+# Czy target wymaga Cloudflare? Wykryj (honoruje FS_TARGET z target.env po wyborze).
+# Pusty (nowy) → tak (domyślny scaffold to CF Worker).
+NEED_CF=1
+if has_code; then
+  . scripts/target.sh
+  NEED_CF="${T_NEEDS_CF:-1}"
+  [ -n "$T_NAME" ] && ok "Target: $T_NAME (Cloudflare: $([ "$NEED_CF" = 1 ] && echo tak || echo nie))."
+fi
+
 [ -f .env ] || cp .env.example .env
-if grep -q '^CLOUDFLARE_API_TOKEN=.\+' .env && grep -q '^CLOUDFLARE_ACCOUNT_ID=.\+' .env; then
+if [ "$NEED_CF" != 1 ]; then
+  say "2/4 Target bez Cloudflare (${T_NAME:-?}) — pomijam token CF"
+  ok "Deploy pójdzie przez komendę targetu. Token CF niepotrzebny."
+elif grep -q '^CLOUDFLARE_API_TOKEN=.\+' .env && grep -q '^CLOUDFLARE_ACCOUNT_ID=.\+' .env; then
+  say "2/4 Konto Cloudflare — token SCOPED na jedno konto"
   ok "Config obecny w .env (account: $(grep '^CLOUDFLARE_ACCOUNT_ID=' .env | cut -d= -f2))."
 else
+  say "2/4 Konto Cloudflare — token SCOPED na jedno konto"
   cat <<'TXT'
 Ten projekt deployuje WYŁĄCZNIE na jedno konto — przez token API ograniczony do tego konta.
 NIE używamy 'wrangler login' (globalny OAuth widzi wszystkie Twoje konta = brak izolacji,
@@ -47,15 +73,20 @@ TXT
   ok "Config zapisany do .env."
 fi
 
-say "3/4 Nowy projekt czy istniejący?"
-echo "  [n] nowy  — scaffold aplikacji, git init, pierwszy deploy na skonfigurowane konto"
-echo "  [e] istniejący — podłącz kod/Workera który już masz w tym katalogu"
-mode="$(ask 'wybór n/e' n)"
-case "$mode" in
-  n|N) bash scripts/new.sh ;;
-  e|E) bash scripts/link.sh ;;
-  *)   die "Nieznany wybór: $mode" ;;
-esac
+say "3/4 Wykrywam projekt"
+# Import ze wskazanej ścieżki → root projektu (tylko gdy root jeszcze pusty).
+if [ -n "$SRC" ] && ! has_code; then
+  [ -d "$SRC" ] || die "Ścieżka nie istnieje: $SRC"
+  cp -r "$SRC"/. "$PROJECT"/ && ok "Skopiowano $SRC → root projektu"
+fi
+# Reguła: kod w roocie → podłącz istniejący. Root pusty → scaffold nowego. Zero pytań.
+if has_code; then
+  ok "Kod w roocie ($PROJECT) — podłączam istniejący projekt."
+  bash scripts/link.sh
+else
+  ok "Root projektu pusty — scaffold nowego."
+  bash scripts/new.sh
+fi
 
-say "4/4 Proxy sterujący (głos z telefonu) — startuje. Ctrl+C = stop, później: bash scripts/proxy.sh"
+say "4/4 Proxy sterujący (głos z telefonu) — startuje. Ctrl+C = stop, później: bash .fs/scripts/proxy.sh"
 bash scripts/proxy.sh
