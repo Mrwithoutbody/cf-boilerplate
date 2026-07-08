@@ -13,7 +13,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const APP_DIR = resolve(__dirname, '..', 'app');   // katalog budowanej aplikacji
+// Projekt = rodzic .fs/ (server.js jest w .fs/control/). Futurestack żyje w
+// .fs/, kod projektu w roocie — Claude Code pracuje na roocie, nie na podfolderze.
+const PROJECT_DIR = resolve(__dirname, '..', '..');
 const STYLES_DIR = join(__dirname, 'styles');      // presety stylu odpowiedzi (*.md)
 const PORT = Number(process.env.PORT || 3000);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
@@ -25,8 +27,8 @@ const KEY = process.env.PROXY_KEY || randomBytes(16).toString('hex');
 // Guardrail przeciw pomyłkom Claude'a, NIE granica bezpieczeństwa — tą jest
 // gate z kluczem (git/npm i tak dają dowolne wykonanie, np. 'npm exec').
 const ALLOWED_TOOLS = ['Bash(npx wrangler:*)', 'Bash(git:*)', 'Bash(npm:*)'];
-// Katalog gdzie Claude Code trzyma transkrypty sesji dla APP_DIR (ścieżka → myślniki).
-const PROJDIR = join(homedir(), '.claude', 'projects', APP_DIR.replace(/[/.]/g, '-'));
+// Katalog gdzie Claude Code trzyma transkrypty sesji dla PROJECT_DIR (ścieżka → myślniki).
+const PROJDIR = join(homedir(), '.claude', 'projects', PROJECT_DIR.replace(/[/.]/g, '-'));
 
 if (process.env.ANTHROPIC_API_KEY) {
   console.warn('! ANTHROPIC_API_KEY ustawiony — claude pójdzie przez płatne API, nie abonament.');
@@ -90,7 +92,7 @@ async function systemPrompt(styleName) {
   return parts.join('\n\n');
 }
 
-// ── URL aplikacji na Cloudflare: nazwa z app/wrangler.* + subdomena z CF API ─
+// ── URL aplikacji na Cloudflare: nazwa z wrangler.* w roocie + subdomena z CF API ─
 let appUrlCache = null;
 async function getAppUrl() {
   if (appUrlCache !== null) return appUrlCache;
@@ -99,7 +101,7 @@ async function getAppUrl() {
     let name = '';
     for (const wf of ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']) {
       try {
-        const txt = await readFile(join(APP_DIR, wf), 'utf8');
+        const txt = await readFile(join(PROJECT_DIR, wf), 'utf8');
         name = (txt.match(/"name"\s*:\s*"([^"]+)"/) || txt.match(/^name\s*=\s*"([^"]+)"/m) || [])[1] || '';
         if (name) break;
       } catch {}
@@ -235,9 +237,9 @@ const server = http.createServer(async (req, res) => {
     if (!prompt) return sendJSON(res, 400, { error: 'pusty prompt' });
     if (!/^[0-9a-f-]{36}$/.test(sessionId)) return sendJSON(res, 400, { error: 'brak/zła sesja' });
 
-    if (!existsSync(APP_DIR)) {
+    if (!existsSync(PROJECT_DIR)) {
       res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
-      return res.end(JSON.stringify({ who: 'result', text: 'Brak katalogu app/. Uruchom ./setup.sh (scaffold + deploy).' }) + '\n');
+      return res.end(JSON.stringify({ who: 'result', text: 'Brak katalogu projektu. Uruchom .fs/setup.sh.' }) + '\n');
     }
 
     res.writeHead(200, {
@@ -264,7 +266,7 @@ const server = http.createServer(async (req, res) => {
 
       await new Promise((done) => {
         const child = spawn(CLAUDE_BIN, args, {
-          cwd: APP_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+          cwd: PROJECT_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
         });
 
         let buf = '';
@@ -294,15 +296,61 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Deploy LIVE — odpala guarded .fs/scripts/deploy.sh (wykrywa target, guard
+  // wymusza scoped token / blokuje boilerplate, commit + właściwa komenda deployu),
+  // streaming wyjścia do telefonu. To idzie na PRODUKCJĘ. Klucz już sprawdzony wyżej.
+  if (req.method === 'POST' && path === '/deploy') {
+    res.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-cache',
+      'transfer-encoding': 'chunked',
+    });
+    const emit = (o) => { if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(o) + '\n'); };
+    const script = join(__dirname, '..', 'scripts', 'deploy.sh');
+    emit({ who: 'result', text: '🚀 Deploy LIVE — start…' });
+    const child = spawn('bash', [script, 'deploy z telefonu'], {
+      cwd: PROJECT_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // Wspólny bufor stdout+stderr → linie jako bloki {who:'result'}.
+    const bufs = { o: '', e: '' };
+    const pump = (k) => (d) => {
+      bufs[k] += d.toString();
+      let nl;
+      while ((nl = bufs[k].indexOf('\n')) >= 0) {
+        const line = bufs[k].slice(0, nl); bufs[k] = bufs[k].slice(nl + 1);
+        if (line.trim()) emit({ who: 'result', text: line });
+      }
+    };
+    child.stdout.on('data', pump('o'));
+    child.stderr.on('data', pump('e'));
+    let finished = false;
+    child.on('close', (code) => {
+      if (finished) return; finished = true;
+      if (bufs.o.trim()) emit({ who: 'result', text: bufs.o });
+      if (bufs.e.trim()) emit({ who: 'result', text: bufs.e });
+      emit({ who: 'result', text: code === 0 ? '✅ LIVE — deploy OK' : `❌ deploy padł (exit ${code})` });
+      emit({ who: 'done', text: '' });
+      res.end();
+    });
+    child.on('error', (e) => {
+      if (finished) return; finished = true;
+      emit({ who: 'result', text: '[spawn error] ' + e.message });
+      emit({ who: 'done', text: '' });
+      res.end();
+    });
+    res.on('close', () => { if (!res.writableEnded) child.kill(); });
+    return;
+  }
+
   res.writeHead(404); res.end('not found');
 });
 
 // Loopback only: jedyne wejście z zewnątrz to tunel (łączy się lokalnie).
 server.listen(PORT, '127.0.0.1', async () => {
-  console.log(`▶ proxy: http://localhost:${PORT}/#k=${KEY}  (app: ${APP_DIR})`);
+  console.log(`▶ proxy: http://localhost:${PORT}/#k=${KEY}  (projekt: ${PROJECT_DIR})`);
   console.log(`  sesje z: ${PROJDIR}`);
   const url = await getAppUrl();
   console.log(url ? `  🌐 aplikacja (podgląd wyników): ${url}`
-                  : '  ! adres aplikacji nieznany (brak app/wrangler.* lub CLOUDFLARE_* w .env)');
+                  : '  ! adres aplikacji nieznany (brak wrangler.* w roocie lub CLOUDFLARE_* w .env)');
   console.log('  Wystaw przez: cloudflared tunnel --url http://localhost:' + PORT);
 });
