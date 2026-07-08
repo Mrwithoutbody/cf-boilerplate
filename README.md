@@ -41,7 +41,8 @@ jednego konta deployuje tylko na to konto, inne są nieosiągalne.
 ```
 Wklej `CLOUDFLARE_ACCOUNT_ID` i `CLOUDFLARE_API_TOKEN`. Reszta bez pytań:
 **root ma kod → podłącza istniejący, pusty → scaffolduje nowy.**
-Kod Workera zawsze w roocie projektu (nie w podfolderze); `.fs/` obok, w `.gitignore`.
+Nowy: wybór stacka (cloudflare / vite / astro / next / expo / własna komenda).
+Kod zawsze w roocie projektu (nie w podfolderze); `.fs/` obok, w `.gitignore`.
 
 ## 4. Deploy — target wykrywany, nie hardcode
 ```bash
@@ -61,7 +62,8 @@ projekt, pierwszy trafiony wygrywa. Ogarnięte out-of-box:
 Przy `setup.sh` wybierasz target **raz** z listy (domyślny = wykryty, Enter
 akceptuje) — zapis do `.fs/target.env`, deploy z telefonu już nie pyta. Nowy
 stack = wrzuć plik do `.fs/targets/`, sam pojawi się w wyborze. Ręczne
-nadpisanie: `.fs/target.env` (`FS_TARGET=...` albo `FS_DEPLOY=...`, `FS_NEEDS_CF=0`).
+nadpisanie: `.fs/target.env` (`FS_TARGET=` / `FS_DEPLOY=` / `FS_NEEDS_CF=0` /
+`FS_ALLOW=cargo,go` — komendy dla Claude z telefonu / `FS_APP_URL=` — URL podglądu).
 Setup pomija token CF gdy target go nie potrzebuje.
 
 ## 5. Sterowanie głosem z telefonu

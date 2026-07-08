@@ -36,6 +36,9 @@ ok "Zależności proxy zainstalowane."
 
 PORT="$(ask 'Port proxy' 3000)"
 set -a; . ./.env; set +a
+# Config targetu do env serwera (FS_ALLOW = dodatkowe komendy dla Claude,
+# FS_APP_URL = jawny URL podglądu). Bije .env gdy oba definiują.
+[ -f ./target.env ] && { set -a; . ./target.env; set +a; }
 
 # Klucz dostępu (capability URL): rotuje z każdym startem jak URL tunelu.
 # Ląduje we FRAGMENCIE linku w QR (#k=...) — fragment nie opuszcza przeglądarki,

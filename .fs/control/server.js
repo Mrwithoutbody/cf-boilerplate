@@ -26,7 +26,11 @@ const KEY = process.env.PROXY_KEY || randomBytes(16).toString('hex');
 // Headless = nie ma jak kliknąć zgody, komendy spoza listy są auto-odrzucane.
 // Guardrail przeciw pomyłkom Claude'a, NIE granica bezpieczeństwa — tą jest
 // gate z kluczem (git/npm i tak dają dowolne wykonanie, np. 'npm exec').
-const ALLOWED_TOOLS = ['Bash(npx wrangler:*)', 'Bash(git:*)', 'Bash(npm:*)'];
+// Baza (git/npm/wrangler) + rozszerzenia per projekt z FS_ALLOW (.fs/target.env
+// albo .fs/.env), np. FS_ALLOW=cargo,go,pnpm,bun → build/test nie-npm stacków.
+const ALLOWED_TOOLS = ['Bash(npx wrangler:*)', 'Bash(git:*)', 'Bash(npm:*)',
+  ...String(process.env.FS_ALLOW || '').split(',').map(s => s.trim()).filter(Boolean)
+    .map(t => `Bash(${t}:*)`)];
 // Katalog gdzie Claude Code trzyma transkrypty sesji dla PROJECT_DIR (ścieżka → myślniki).
 const PROJDIR = join(homedir(), '.claude', 'projects', PROJECT_DIR.replace(/[/.]/g, '-'));
 
@@ -92,20 +96,26 @@ async function systemPrompt(styleName) {
   return parts.join('\n\n');
 }
 
-// ── URL aplikacji na Cloudflare: nazwa z wrangler.* w roocie + subdomena z CF API ─
+// ── URL aplikacji (podgląd wyników). Zależny od targetu, nie tylko Workers:
+//    1. jawny FS_APP_URL (target.env) — dowolny stack (Pages custom domain, Expo, ...)
+//    2. Cloudflare Pages (pages_build_output_dir) → <name>.pages.dev
+//    3. Cloudflare Worker → <name>.<subdomena>.workers.dev (subdomena z CF API)
 let appUrlCache = null;
 async function getAppUrl() {
   if (appUrlCache !== null) return appUrlCache;
   appUrlCache = '';
   try {
-    let name = '';
+    if (process.env.FS_APP_URL) { appUrlCache = process.env.FS_APP_URL; return appUrlCache; }
+    let name = '', isPages = false;
     for (const wf of ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']) {
       try {
         const txt = await readFile(join(PROJECT_DIR, wf), 'utf8');
+        if (/pages_build_output_dir/.test(txt)) isPages = true;
         name = (txt.match(/"name"\s*:\s*"([^"]+)"/) || txt.match(/^name\s*=\s*"([^"]+)"/m) || [])[1] || '';
         if (name) break;
       } catch {}
     }
+    if (isPages && name) { appUrlCache = `https://${name}.pages.dev`; return appUrlCache; }
     const acc = process.env.CLOUDFLARE_ACCOUNT_ID, token = process.env.CLOUDFLARE_API_TOKEN;
     if (!name || !acc || !token) return appUrlCache;
     const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc}/workers/subdomain`,
