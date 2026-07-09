@@ -4,9 +4,9 @@
 // Dostęp: capability URL — klucz we fragmencie linku z QR (#k=...), gate na
 // każdym endpoincie poza statycznym HTML. Zero zależności — czysty Node.
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -33,6 +33,36 @@ const ALLOWED_TOOLS = ['Bash(npx wrangler:*)', 'Bash(git:*)', 'Bash(npm:*)',
     .map(t => `Bash(${t}:*)`)];
 // Katalog gdzie Claude Code trzyma transkrypty sesji dla PROJECT_DIR (ścieżka → myślniki).
 const PROJDIR = join(homedir(), '.claude', 'projects', PROJECT_DIR.replace(/[/.]/g, '-'));
+
+// ── Git per sesja: baza (HEAD przy pierwszym kontakcie) + commity zrobione
+// w turach tej sesji. Umożliwia wycofanie CAŁEJ sesji (/session/:id/rollback).
+// Stan w .fs/session-git.json (przeżywa restart proxy); treść zmian trzyma git,
+// plik tylko przypisuje commity do sesji.
+const GITSTATE_FILE = resolve(__dirname, '..', 'session-git.json');
+let gitState = {};
+try { gitState = JSON.parse(readFileSync(GITSTATE_FILE, 'utf8')); } catch {}
+function saveGitState(){ try { writeFileSync(GITSTATE_FILE, JSON.stringify(gitState, null, 1)); } catch {} }
+// git w katalogu projektu; null przy błędzie (brak repo, konflikt, ...).
+function git(...args) {
+  const r = spawnSync('git', args, { cwd: PROJECT_DIR, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+const gitHead = () => git('rev-parse', 'HEAD');
+// Załóż wpis sesji przy pierwszym kontakcie (baza = HEAD sprzed jakichkolwiek zmian).
+function gitTrack(id) {
+  const head = gitHead(); if (!head) return null;
+  if (!gitState[id]) { gitState[id] = { base: head, commits: [] }; saveGitState(); }
+  return gitState[id];
+}
+// Dopisz sesji commity powstałe od 'before' (jedna tura /ask albo /deploy).
+function gitRecord(id, before) {
+  const st = gitState[id], now = gitHead();
+  if (!st || !before || !now || before === now) return;
+  const list = git('rev-list', `${before}..${now}`);
+  if (!list) return;
+  st.commits.push(...list.split('\n').filter(Boolean));
+  saveGitState();
+}
 
 if (process.env.ANTHROPIC_API_KEY) {
   console.warn('! ANTHROPIC_API_KEY ustawiony — claude pójdzie przez płatne API, nie abonament.');
@@ -181,6 +211,46 @@ function checkKey(req) {
   const k = String(req.headers['x-key'] || '');
   return k.length === KEY.length && timingSafeEqual(Buffer.from(k), Buffer.from(KEY));
 }
+// Nagłówki streamingu NDJSON (odpowiedzi /ask, /deploy, /rollback).
+const NDJSON = {
+  'content-type': 'application/x-ndjson; charset=utf-8',
+  'cache-control': 'no-cache',
+  'transfer-encoding': 'chunked',
+};
+// Odpal skrypt .fs/scripts/* i streamuj stdout+stderr liniami jako {who:'result'}.
+// Zwraca kod wyjścia (-1 przy spawn error). Wywołujący domyka odpowiedź.
+function streamScript(res, emit, script, args = []) {
+  return new Promise((finish) => {
+    const child = spawn('bash', [script, ...args], {
+      cwd: PROJECT_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const bufs = { o: '', e: '' };
+    const pump = (k) => (d) => {
+      bufs[k] += d.toString();
+      let nl;
+      while ((nl = bufs[k].indexOf('\n')) >= 0) {
+        const line = bufs[k].slice(0, nl); bufs[k] = bufs[k].slice(nl + 1);
+        if (line.trim()) emit({ who: 'result', text: line });
+      }
+    };
+    child.stdout.on('data', pump('o'));
+    child.stderr.on('data', pump('e'));
+    let finished = false;
+    child.on('close', (code) => {
+      if (finished) return; finished = true;
+      if (bufs.o.trim()) emit({ who: 'result', text: bufs.o });
+      if (bufs.e.trim()) emit({ who: 'result', text: bufs.e });
+      finish(code);
+    });
+    child.on('error', (e) => {
+      if (finished) return; finished = true;
+      emit({ who: 'result', text: '[spawn error] ' + e.message });
+      finish(-1);
+    });
+    res.on('close', () => { if (!res.writableEnded) child.kill(); });
+  });
+}
+
 // Kolejka per sesja: drugi /ask na tę samą sesję czeka aż pierwszy skończy —
 // współbieżne 'claude --resume' na jednym transkrypcie to korupcja historii.
 const queues = new Map();
@@ -252,11 +322,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ who: 'result', text: 'Brak katalogu projektu. Uruchom .fs/setup.sh.' }) + '\n');
     }
 
-    res.writeHead(200, {
-      'content-type': 'application/x-ndjson; charset=utf-8',
-      'cache-control': 'no-cache',
-      'transfer-encoding': 'chunked',
-    });
+    res.writeHead(200, NDJSON);
 
     const emit = (o) => { if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(o) + '\n'); };
 
@@ -264,6 +330,9 @@ const server = http.createServer(async (req, res) => {
     // poprzednia tura skończy — wcześniej nie wiadomo, czy transkrypt istnieje.
     enqueue(sessionId, async () => {
       if (res.destroyed || res.writableEnded) return;   // klient odpadł w kolejce
+      // Baza sesji (pierwszy kontakt) + punkt startu tury — po turze commity
+      // z zakresu gitBefore..HEAD zapisują się jako commity tej sesji.
+      const gitBefore = gitTrack(sessionId) && gitHead();
       // Nowa sesja gdy plik jeszcze nie istnieje, inaczej wznów.
       const started = existsSync(join(PROJDIR, sessionId + '.jsonl'));
       const sys = await systemPrompt(styleName);
@@ -298,7 +367,7 @@ const server = http.createServer(async (req, res) => {
         child.stderr.on('data', d => emit({ who: 'result', text: '[err] ' + d.toString().slice(0, 300) }));
         // Flaga chroni przed podwójnym res.end(): przy błędzie spawn Node emituje 'error' ORAZ 'close'.
         let finished = false;
-        child.on('close', () => { if (finished) return; finished = true; emit({ who: 'done', text: '' }); res.end(); done(); });
+        child.on('close', () => { if (finished) return; finished = true; gitRecord(sessionId, gitBefore); emit({ who: 'done', text: '' }); res.end(); done(); });
         child.on('error', e => { if (finished) return; finished = true; emit({ who: 'result', text: '[spawn error] ' + e.message }); res.end(); done(); });
         res.on('close', () => { if (!res.writableEnded) child.kill(); });
       });
@@ -309,46 +378,63 @@ const server = http.createServer(async (req, res) => {
   // Deploy LIVE — odpala guarded .fs/scripts/deploy.sh (wykrywa target, guard
   // wymusza scoped token / blokuje boilerplate, commit + właściwa komenda deployu),
   // streaming wyjścia do telefonu. To idzie na PRODUKCJĘ. Klucz już sprawdzony wyżej.
+  // Body może nieść sessionId — commit dosypany przez deploy.sh (niedomknięte
+  // zmiany w drzewie) przypisuje się tej sesji, żeby rollback go objął.
   if (req.method === 'POST' && path === '/deploy') {
-    res.writeHead(200, {
-      'content-type': 'application/x-ndjson; charset=utf-8',
-      'cache-control': 'no-cache',
-      'transfer-encoding': 'chunked',
-    });
+    let sid = '';
+    try { sid = JSON.parse(await readBody(req)).sessionId || ''; } catch {}
+    if (!/^[0-9a-f-]{36}$/.test(sid)) sid = '';
+    res.writeHead(200, NDJSON);
     const emit = (o) => { if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(o) + '\n'); };
-    const script = join(__dirname, '..', 'scripts', 'deploy.sh');
     emit({ who: 'result', text: '🚀 Deploy LIVE — start…' });
-    const child = spawn('bash', [script, 'deploy z telefonu'], {
-      cwd: PROJECT_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    // Wspólny bufor stdout+stderr → linie jako bloki {who:'result'}.
-    const bufs = { o: '', e: '' };
-    const pump = (k) => (d) => {
-      bufs[k] += d.toString();
-      let nl;
-      while ((nl = bufs[k].indexOf('\n')) >= 0) {
-        const line = bufs[k].slice(0, nl); bufs[k] = bufs[k].slice(nl + 1);
-        if (line.trim()) emit({ who: 'result', text: line });
+    const before = sid ? (gitTrack(sid) && gitHead()) : null;
+    const code = await streamScript(res, emit, join(__dirname, '..', 'scripts', 'deploy.sh'), ['deploy z telefonu']);
+    if (before) gitRecord(sid, before);
+    emit({ who: 'result', text: code === 0 ? '✅ LIVE — deploy OK' : `❌ deploy padł (exit ${code})` });
+    emit({ who: 'done', text: '' });
+    res.end();
+    return;
+  }
+
+  // Wycofanie SESJI — revert wszystkich commitów sesji (base..HEAD) jednym
+  // zbiorczym commitem + deploy wersji sprzed sesji. Bezpieczniki: odmawia gdy
+  // drzewo brudne albo w zakresie są commity spoza sesji (inna sesja / ręczne) —
+  // wtedy zostaje ręczny 'git revert'. Idzie przez kolejkę sesji jak /ask.
+  if (req.method === 'POST' && path.startsWith('/session/') && path.endsWith('/rollback')) {
+    const id = path.slice('/session/'.length, -'/rollback'.length);
+    if (!/^[0-9a-f-]{36}$/.test(id)) return sendJSON(res, 400, { error: 'zła sesja' });
+    res.writeHead(200, NDJSON);
+    const emit = (o) => { if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(o) + '\n'); };
+    const finish = (t) => { if (t) emit({ who: 'result', text: t }); emit({ who: 'done', text: '' }); res.end(); };
+    enqueue(id, async () => {
+      if (res.destroyed || res.writableEnded) return;
+      const st = gitState[id];
+      if (!gitHead()) return finish('✗ Projekt nie jest repozytorium git.');
+      if (!st) return finish('✗ Sesja nie ma zapisanej bazy (starsza niż funkcja wycofywania).');
+      // -uno: pliki untracked nie blokują (nie kolidują z revertem śledzonych)
+      if (git('status', '--porcelain', '-uno')) return finish('✗ Niezacommitowane zmiany w projekcie — dokończ turę albo posprzątaj drzewo.');
+      const commits = (git('rev-list', `${st.base}..HEAD`) || '').split('\n').filter(Boolean);
+      if (!commits.length) return finish('Nic do wycofania — projekt jest w stanie sprzed sesji.');
+      const foreign = commits.filter(c => !st.commits.includes(c));
+      if (foreign.length) return finish(`✗ W zakresie ${foreign.length} commit(ów) spoza tej sesji — automat odmawia, wycofaj ręcznie (git revert).`);
+      emit({ who: 'result', text: `⏪ Wycofuję ${commits.length} commit(ów) sesji:` });
+      for (const l of (git('log', '--oneline', `${st.base}..HEAD`) || '').split('\n')) if (l) emit({ who: 'result', text: '  ' + l });
+      // Range revert bez commitów pośrednich → drzewo = dokładnie baza sesji,
+      // potem jeden zbiorczy commit. Błąd → abort, historia nietknięta.
+      if (git('revert', '--no-commit', `${st.base}..HEAD`) === null) {
+        git('revert', '--abort');
+        return finish('✗ git revert nie przeszedł — historia nietknięta.');
       }
-    };
-    child.stdout.on('data', pump('o'));
-    child.stderr.on('data', pump('e'));
-    let finished = false;
-    child.on('close', (code) => {
-      if (finished) return; finished = true;
-      if (bufs.o.trim()) emit({ who: 'result', text: bufs.o });
-      if (bufs.e.trim()) emit({ who: 'result', text: bufs.e });
-      emit({ who: 'result', text: code === 0 ? '✅ LIVE — deploy OK' : `❌ deploy padł (exit ${code})` });
-      emit({ who: 'done', text: '' });
-      res.end();
+      if (git('status', '--porcelain')) {
+        if (git('commit', '-m', `rollback: sesja ${id.slice(0, 8)} (${commits.length} commitów)`) === null)
+          return finish('✗ commit rollbacku nie przeszedł.');
+      } // pusty diff (commity sesji zniosły się nawzajem) → nie ma czego commitować
+      gitState[id] = { base: gitHead(), commits: [] };  // po wycofaniu sesja startuje na czysto
+      saveGitState();
+      emit({ who: 'result', text: '✔ Zmiany sesji wycofane. 🚀 Deploy wersji sprzed sesji…' });
+      const code = await streamScript(res, emit, join(__dirname, '..', 'scripts', 'deploy.sh'), [`rollback sesji ${id.slice(0, 8)}`]);
+      finish(code === 0 ? '✅ LIVE — produkcja wróciła do stanu sprzed sesji' : `❌ wycofane w git, ale deploy padł (exit ${code})`);
     });
-    child.on('error', (e) => {
-      if (finished) return; finished = true;
-      emit({ who: 'result', text: '[spawn error] ' + e.message });
-      emit({ who: 'done', text: '' });
-      res.end();
-    });
-    res.on('close', () => { if (!res.writableEnded) child.kill(); });
     return;
   }
 
