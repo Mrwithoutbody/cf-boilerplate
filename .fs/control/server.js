@@ -19,6 +19,10 @@ const PROJECT_DIR = resolve(__dirname, '..', '..');
 const STYLES_DIR = join(__dirname, 'styles');      // presety stylu odpowiedzi (*.md)
 const PORT = Number(process.env.PORT || 3000);
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+// Model dla sesji z telefonu. Pusty → domyślny model CLI (globalny /model).
+// Ustaw FS_MODEL w .fs/target.env (np. opus, sonnet, haiku, albo pełne id),
+// żeby telefon jechał na stałym modelu niezależnie od globalnego defaultu.
+const MODEL = String(process.env.FS_MODEL || '').trim();
 // Klucz dostępu = jedyna granica zaufania. Rotuje z każdym startem (jak URL
 // tunelu). W QR ląduje we FRAGMENCIE (#k=...) — fragment nie opuszcza
 // przeglądarki: nie ma go w requestach, Refererze ani logach tunelu.
@@ -352,6 +356,7 @@ const server = http.createServer(async (req, res) => {
       const sys = await systemPrompt(styleName);
       const args = ['--print', '--output-format', 'stream-json', '--verbose',
                     '--permission-mode', 'acceptEdits', '--allowedTools', ...ALLOWED_TOOLS];
+      if (MODEL) args.push('--model', MODEL);
       if (started) args.push('--resume', sessionId);
       else args.push('--session-id', sessionId);
       if (sys) args.push('--append-system-prompt', sys);
@@ -459,6 +464,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', async () => {
   console.log(`▶ proxy: http://localhost:${PORT}/#k=${KEY}  (projekt: ${PROJECT_DIR})`);
   console.log(`  sesje z: ${PROJDIR}`);
+  console.log(`  model: ${MODEL || '(domyślny CLI — globalny /model)'}`);
   const url = await getAppUrl();
   console.log(url ? `  🌐 aplikacja (podgląd wyników): ${url}`
                   : '  ! adres aplikacji nieznany (brak wrangler.* w roocie lub CLOUDFLARE_* w .env)');
