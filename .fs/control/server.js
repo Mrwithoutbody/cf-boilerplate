@@ -145,8 +145,22 @@ async function getAppUrl() {
         if (name) break;
       } catch {}
     }
-    if (isPages && name) { appUrlCache = `https://${name}.pages.dev`; return appUrlCache; }
     const acc = process.env.CLOUDFLARE_ACCOUNT_ID, token = process.env.CLOUDFLARE_API_TOKEN;
+    if (isPages && name) {
+      // CF dokleja losowy sufiks gdy <name>.pages.dev zajęte globalnie
+      // (np. affa → affa-27b). API zna kanoniczny subdomain; pytamy o niego.
+      // Bez creds zgadujemy <name>.pages.dev — może trafić w cudzy projekt.
+      if (acc && token) {
+        try {
+          const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc}/pages/projects/${name}`,
+            { headers: { authorization: `Bearer ${token}` } });
+          const sub = (await r.json())?.result?.subdomain;
+          if (sub) { appUrlCache = `https://${sub}`; return appUrlCache; }
+        } catch {}
+      }
+      appUrlCache = `https://${name}.pages.dev`;
+      return appUrlCache;
+    }
     if (!name || !acc || !token) return appUrlCache;
     const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc}/workers/subdomain`,
       { headers: { authorization: `Bearer ${token}` } });
