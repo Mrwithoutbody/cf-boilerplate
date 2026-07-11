@@ -23,35 +23,38 @@ echo "  Stack: cloudflare (Workers/Pages) · vite · astro · next · expo · wl
 STACK="$(ask 'stack' cloudflare)"
 
 # Scaffold do temp w .fs/ (scaffoldery wymagają pustego celu), potem move do roota.
-TMP="$FS/.scaffold"; rm -rf "$TMP"
+# Cel = $TMP/$NAME, nie samo $TMP: scaffoldery (create-cloudflare) biorą nazwę
+# aplikacji z basename katalogu, a ".scaffold" (kropka) łamie walidację nazwy.
+TMP="$FS/.scaffold"; rm -rf "$TMP"; mkdir -p "$TMP"
+DEST="$TMP/$NAME"
 CF=0
 say "Scaffold ($STACK) → root projektu"
 case "$STACK" in
   cloudflare)
     FRAMEWORK="$(ask 'Framework CF: hono / react-router / none' hono)"
     if [ "$FRAMEWORK" = none ]; then
-      npm create cloudflare@latest "$TMP" -- --type=hello-world --lang=ts --no-git --no-deploy
+      npm create cloudflare@latest "$DEST" -- --type=hello-world --lang=ts --no-git --no-deploy
     else
-      npm create cloudflare@latest "$TMP" -- --framework="$FRAMEWORK" --no-git --no-deploy
+      npm create cloudflare@latest "$DEST" -- --framework="$FRAMEWORK" --no-git --no-deploy
     fi
     CF=1 ;;
   vite)
     T="$(ask 'Template vite (vanilla/react/vue/svelte/...)' vanilla)"
-    npm create vite@latest "$TMP" -- --template "$T" ;;
+    npm create vite@latest "$DEST" -- --template "$T" ;;
   astro)
-    npm create astro@latest "$TMP" -- --template minimal --no-git --skip-houston --yes ;;
+    npm create astro@latest "$DEST" -- --template minimal --no-git --skip-houston --yes ;;
   next)
-    npx create-next-app@latest "$TMP" --yes --no-git ;;
+    npx create-next-app@latest "$DEST" --yes --no-git ;;
   expo)
-    npx create-expo-app@latest "$TMP" ;;
+    npx create-expo-app@latest "$DEST" ;;
   *)  # własna komenda: %DIR% = katalog docelowy scaffoldu
     CMD="$(ask 'Pełna komenda scaffoldu (cel = %DIR%)' '')"
     [ -n "$CMD" ] || { echo "Brak komendy — przerywam."; exit 1; }
-    eval "${CMD//%DIR%/$TMP}" ;;
+    eval "${CMD//%DIR%/$DEST}" ;;
 esac
 
 shopt -s dotglob
-mv "$TMP"/* "$PROJECT"/ 2>/dev/null || true
+mv "$DEST"/* "$PROJECT"/ 2>/dev/null || true
 shopt -u dotglob
 rm -rf "$TMP"
 ok "Kod ($STACK) w roocie projektu."
