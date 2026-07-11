@@ -11,8 +11,13 @@ ze stanu (pliki, katalogi, .env). Domyślne wartości > interaktywne prompty.
 To repo (`futurestack`) jest źródłem prawdy dla payloadu w `.fs/`
 (`.fs/control/`, `.fs/scripts/`, `.fs/setup.sh`). Root repo = tylko docs
 (README, LICENSE, CLAUDE.md) + folder `.fs/`. Payload wysyła się do usera przez
-`npx degit .../futurestack/.fs .fs` — ląduje jako `.fs/` WEWNĄTRZ jego projektu
-(degit = kopia plików bez `.git`/historii/remote, nie git clone).
+`npx degit Mrwithoutbody/cf-boilerplate/.fs .fs` — ląduje jako `.fs/` WEWNĄTRZ
+jego projektu (degit = kopia plików bez `.git`/historii/remote, nie git clone).
+
+UWAGA nazwa repo: katalog nazywa się `futurestack`, ale remote `origin` to
+`github.com/Mrwithoutbody/cf-boilerplate` (INNA nazwa; repo `futurestack` NIE
+istnieje — nie twórz go). Pushuj i degituj z `cf-boilerplate`. Nie zakładaj, że
+nazwa katalogu = nazwa repo.
 Projekty pochodne (np. `/home/dadmor/projekty/znany-biuro`) to konsumenci —
 osobne gity, bez remote, futurestack odizolowany w `.fs/` (gitignore).
 
