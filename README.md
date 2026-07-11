@@ -43,3 +43,8 @@ potwierdzenie → deploy na **produkcję** (guarded, target-aware), wynik stream
 
 🔑 Dostęp chroni **klucz w linku z QR** (rotuje co start, tylko loopback). Link = pełna
 kontrola nad komputerem — traktuj jak hasło. Restart proxy = nowy QR, stary link umiera.
+
+🧱 `FS_SANDBOX=1` (wymaga `bwrap`) → claude leci w piaskownicy: **zapis tylko do projektu
+i `~/.claude`**, reszta systemu read-only. Blokuje "wyjście z projektu" (kasowanie/zapis
+poza drzewem) nawet po przejściu klucza. Deploy/commit działają (auth z HOME ro). Brak
+bwrap albo flaga pusta → bez zmian. Uwaga: to bariera zapisu, nie ukrycie plików do odczytu.

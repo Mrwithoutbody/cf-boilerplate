@@ -30,11 +30,40 @@ const KEY = process.env.PROXY_KEY || randomBytes(16).toString('hex');
 // Headless = nie ma jak kliknąć zgody, komendy spoza listy są auto-odrzucane.
 // Guardrail przeciw pomyłkom Claude'a, NIE granica bezpieczeństwa — tą jest
 // gate z kluczem (git/npm i tak dają dowolne wykonanie, np. 'npm exec').
+// Twardą granicę FS daje opcjonalna piaskownica FS_SANDBOX (patrz sandboxWrap).
 // Baza (git/npm/wrangler) + rozszerzenia per projekt z FS_ALLOW (.fs/target.env
 // albo .fs/.env), np. FS_ALLOW=cargo,go,pnpm,bun → build/test nie-npm stacków.
 const ALLOWED_TOOLS = ['Bash(npx wrangler:*)', 'Bash(git:*)', 'Bash(npm:*)',
   ...String(process.env.FS_ALLOW || '').split(',').map(s => s.trim()).filter(Boolean)
     .map(t => `Bash(${t}:*)`)];
+
+// ── Piaskownica FS wokół spawnu Claude (opcjonalna, domyślnie OFF) ──────────
+// FS_SANDBOX=1 → claude leci w bwrap: ZAPIS tylko do PROJECT_DIR i ~/.claude,
+// reszta HOME/systemu read-only. To realna granica "wyjścia z projektu" nawet
+// po przejściu gate z kluczem: blokuje zapis/kasowanie poza drzewem (rm cudzych
+// projektów, podmiana ~/.bashrc, ~/.ssh, plant w innym repo). git/npm/wrangler
+// czytają auth/config z HOME (ro) → deploy i commit działają jak bez piaskownicy.
+// Ograniczenie: HOME jest read-only, NIE ukryty — odczyt sekretów (~/.ssh) wciąż
+// możliwy; to bariera zapisu i niszczenia, nie pełna izolacja odczytu.
+// Brak bwrap albo puste FS_SANDBOX → zwraca komendę bez zmian (nie psuje app).
+const HOME = homedir();
+let bwrapWarned = false;
+function sandboxWrap(bin, args) {
+  if (!process.env.FS_SANDBOX) return [bin, args];
+  if (spawnSync('bwrap', ['--version'], { stdio: 'ignore' }).status !== 0) {
+    if (!bwrapWarned) { console.warn('! FS_SANDBOX ustawiony, ale brak bwrap — claude leci BEZ piaskownicy.'); bwrapWarned = true; }
+    return [bin, args];
+  }
+  const bw = ['--die-with-parent', '--unshare-all', '--share-net',
+              '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp'];
+  for (const p of ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc', '/opt', '/run'])
+    if (existsSync(p)) bw.push('--ro-bind', p, p);         // system + resolv.conf/CA/gitconfig
+  bw.push('--ro-bind', HOME, HOME);                        // auth/config/claude-bin czytelne
+  bw.push('--bind', PROJECT_DIR, PROJECT_DIR);             // projekt zapisywalny (kolejność: wygrywa nad HOME ro)
+  bw.push('--bind', join(HOME, '.claude'), join(HOME, '.claude')); // transkrypty/auth zapis
+  bw.push('--chdir', PROJECT_DIR, '--', bin, ...args);
+  return ['bwrap', bw];
+}
 // Katalog gdzie Claude Code trzyma transkrypty sesji dla PROJECT_DIR (ścieżka → myślniki).
 const PROJDIR = join(homedir(), '.claude', 'projects', PROJECT_DIR.replace(/[/.]/g, '-'));
 
@@ -363,7 +392,8 @@ const server = http.createServer(async (req, res) => {
       args.push('-p', prompt);
 
       await new Promise((done) => {
-        const child = spawn(CLAUDE_BIN, args, {
+        const [sbBin, sbArgs] = sandboxWrap(CLAUDE_BIN, args);
+        const child = spawn(sbBin, sbArgs, {
           cwd: PROJECT_DIR, env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
         });
 
