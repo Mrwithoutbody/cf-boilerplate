@@ -90,7 +90,7 @@ fi
 if [ "$CF" = 1 ]; then
   say "Pierwszy deploy (dowód środowiska)"
   if [ "$(ask 'Deploy teraz na Cloudflare? t/n' t)" = t ]; then
-    . "$DIR/guard.sh"              # wymusza token+account, blokuje jak brak
+    . "$FS/scripts/guard.sh"       # abs: po 'cd $PROJECT' $DIR bylby wzgledny i nie trafial
     wrangler deploy
     ok "Live. URL powyżej (*.workers.dev) — jedyne miejsce podglądu."
   else
