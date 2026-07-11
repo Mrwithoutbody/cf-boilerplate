@@ -2,5 +2,5 @@ Ten plik oznacza katalog jako DEV boilerplate. Dopóki istnieje — deploy jest 
 scripts/new.sh i scripts/link.sh usuwają go, gdy z instancji tworzysz realny projekt.
 Nigdy nie deployuj z boilerplate. Zainstaluj futurestack w SWOIM projekcie jako .fs/:
   cd ~/moj-projekt
-  npx degit Mrwithoutbody/futurestack/.fs .fs
+  npx degit Mrwithoutbody/cf-boilerplate/.fs .fs
   cd .fs && ./setup.sh

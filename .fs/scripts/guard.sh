@@ -6,7 +6,7 @@ guard_die(){ printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 _ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 [ -f "$_ROOT/.is-boilerplate" ] && guard_die \
-  "To jest boilerplate DEV — deploy zablokowany. W swoim projekcie: npx degit ...futurestack/.fs .fs && cd .fs && ./setup.sh (setup usuwa marker)."
+  "To jest boilerplate DEV — deploy zablokowany. W swoim projekcie: npx degit ...cf-boilerplate/.fs .fs && cd .fs && ./setup.sh (setup usuwa marker)."
 
 # .env ładowane zawsze (może mieć sekrety projektu), o ile jest.
 [ -f "$_ROOT/.env" ] && { set -a; . "$_ROOT/.env"; set +a; }

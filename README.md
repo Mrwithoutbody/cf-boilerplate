@@ -6,7 +6,7 @@ Rozwijaj projekt (dowolny stack) głosem z telefonu → deploy LIVE na produkcj�
 ## 1. Instalacja (istniejący projekt albo pusty folder)
 ```bash
 cd ~/projekty/moja-apka
-npx degit Mrwithoutbody/futurestack/.fs .fs   # sam payload, bez gita/historii
+npx degit Mrwithoutbody/cf-boilerplate/.fs .fs   # sam payload, bez gita/historii
 cd .fs && ./setup.sh                            # albo: ./setup.sh ~/kod/src (import kodu)
 ```
 

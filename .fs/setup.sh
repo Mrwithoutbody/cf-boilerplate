@@ -2,7 +2,7 @@
 # Boilerplate startowy: Cloudflare-only + git lokalny + proxy głosowy.
 # Izolacja per konto: token API SCOPED na jedno konto (NIE 'wrangler login').
 # Model: futurestack żyje w .fs/ WEWNĄTRZ Twojego projektu; kod projektu w roocie.
-# Użycie: w projekcie → npx degit ...futurestack .fs && cd .fs && ./setup.sh
+# Użycie: w projekcie → npx degit ...cf-boilerplate/.fs .fs && cd .fs && ./setup.sh
 set -euo pipefail
 cd "$(dirname "$0")"                   # .fs/ (tu są narzędzia)
 PROJECT="$(cd .. && pwd)"              # projekt = rodzic .fs/ (tu jest/ląduje kod)
